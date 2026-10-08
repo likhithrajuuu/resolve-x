@@ -1,0 +1,47 @@
+# Ingestion is stateless: scale it horizontally on CPU. Kafka partitions and
+# the processor consumer group scale the rest of the pipeline independently.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: ingestion, labels: { app: ingestion } }
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: ingestion } }
+  template:
+    metadata: { labels: { app: ingestion } }
+    spec:
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: ingestion } } }
+      containers:
+        - name: ingestion
+          image: ghcr.io/resolve-x/ingestion:latest
+          ports: [{ containerPort: 4317, name: grpc }, { containerPort: 4318, name: http }, { containerPort: 9100, name: ops }]
+          envFrom: [{ secretRef: { name: resolvex-backend } }]
+          resources: { requests: { cpu: 500m, memory: 256Mi }, limits: { memory: 512Mi } }
+          readinessProbe: { httpGet: { path: /readyz, port: ops }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: ops }, periodSeconds: 10 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: ingestion }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: ingestion }
+  minReplicas: 3
+  maxReplicas: 100
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 60 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: ingestion }
+spec:
+  minAvailable: 2
+  selector: { matchLabels: { app: ingestion } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: ingestion }
+spec:
+  selector: { app: ingestion }
+  ports: [{ name: grpc, port: 4317 }, { name: http, port: 4318 }]

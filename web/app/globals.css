@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #07090d;
+  --surface: #0e121a;
+  --surface-2: #141a25;
+  --line: #1f2735;
+  --fg: #e8ecf4;
+  --muted: #8b95a8;
+  --accent: #5b8cff;
+  --accent-2: #2dd4a8;
+  --danger: #ff5d6c;
+  --warn: #ffb547;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-danger: var(--danger);
+  --color-warn: var(--warn);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+html { color-scheme: dark; scroll-behavior: smooth; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); }
+
+.glow {
+  background:
+    radial-gradient(60% 50% at 50% 0%, rgba(91, 140, 255, 0.22), transparent 70%),
+    radial-gradient(40% 40% at 85% 10%, rgba(45, 212, 168, 0.12), transparent 70%);
+}
+.grid-bg {
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(70% 60% at 50% 0%, #000 30%, transparent 75%);
+}
