@@ -1,6 +1,6 @@
-// Package gatewayapi implements the API Gateway: authentication, tenancy and
-// access management, and routing to internal services.
-package gatewayapi
+// Package tenancy implements tenant, project, environment and API-key
+// management. It sits behind Kong, which owns routing, rate limiting and TLS.
+package tenancy
 
 import (
 	"context"
@@ -10,8 +10,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"strings"
 	"time"
 
@@ -31,8 +29,9 @@ const identityKey ctxKey = 0
 // never from a request parameter (api-gateway.md, Security).
 type Identity struct{ TenantID, Actor string }
 
-// Authenticator turns a request into an Identity. The real implementation
-// (OIDC / session JWT) plugs in here; DevAuthenticator exists for local work.
+// Authenticator turns a request into an Identity. Kong forwards the caller's
+// credentials unchanged; the real implementation (OIDC / session JWT) plugs in
+// here once an identity provider is chosen. DevAuthenticator is local-only.
 type Authenticator interface {
 	Authenticate(r *http.Request) (Identity, bool)
 }
@@ -49,15 +48,14 @@ func (d DevAuthenticator) Authenticate(r *http.Request) (Identity, bool) {
 	return Identity{TenantID: d.TenantID, Actor: "dev-user"}, true
 }
 
-type Gateway struct {
-	DB        *pgxpool.Pool
-	Redis     *redis.Client
-	Auth      Authenticator
-	Upstreams map[string]*url.URL // path prefix -> internal service
-	Log       *slog.Logger
+type Service struct {
+	DB    *pgxpool.Pool
+	Redis *redis.Client
+	Auth  Authenticator
+	Log   *slog.Logger
 }
 
-func (g *Gateway) Handler() http.Handler {
+func (g *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/projects", g.secure(g.listProjects))
 	mux.HandleFunc("POST /api/v1/projects", g.secure(g.createProject))
@@ -66,33 +64,16 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/projects/{projectId}/api-keys", g.secure(g.createAPIKey))
 	mux.HandleFunc("DELETE /api/v1/projects/{projectId}/api-keys/{keyId}", g.secure(g.revokeAPIKey))
 
-	// Routed services. Each upstream is optional; an unconfigured route fails
-	// alone and does not affect any other route.
-	for prefix, target := range g.Upstreams {
-		proxy := httputil.NewSingleHostReverseProxy(target)
-		proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-			g.Log.Warn("upstream error", "prefix", prefix, "err", err)
-			writeErr(w, http.StatusBadGateway, "upstream_unavailable", "service unavailable")
-		}
-		mux.Handle(prefix, g.secure(func(w http.ResponseWriter, r *http.Request, id Identity) {
-			r.Header.Set("X-Tenant-Id", id.TenantID) // trusted: set after auth, overwrites caller input
-			proxy.ServeHTTP(w, r)
-		}))
-	}
-	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
-		writeErr(w, http.StatusNotImplemented, "not_implemented", "route not available yet")
-	})
 	return requestID(mux)
 }
 
-func (g *Gateway) secure(h func(http.ResponseWriter, *http.Request, Identity)) http.HandlerFunc {
+func (g *Service) secure(h func(http.ResponseWriter, *http.Request, Identity)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := g.Auth.Authenticate(r)
 		if !ok {
 			writeErr(w, http.StatusUnauthorized, "unauthenticated", "missing or invalid credentials")
 			return
 		}
-		r.Header.Del("X-Tenant-Id")
 		h(w, r, id)
 	}
 }
@@ -126,7 +107,7 @@ func decode(r *http.Request, v any) bool {
 
 func newID(prefix string) string { return prefix + "_" + strings.ToLower(ulid.Make().String()) }
 
-func (g *Gateway) audit(ctx context.Context, id Identity, action, target string) {
+func (g *Service) audit(ctx context.Context, id Identity, action, target string) {
 	_, err := g.DB.Exec(ctx, `INSERT INTO audit_log (tenant_id, actor, action, target) VALUES ($1,$2,$3,$4)`, id.TenantID, id.Actor, action, target)
 	if err != nil {
 		g.Log.Error("audit write failed", "action", action, "err", err)
@@ -139,7 +120,7 @@ type project struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-func (g *Gateway) listProjects(w http.ResponseWriter, r *http.Request, id Identity) {
+func (g *Service) listProjects(w http.ResponseWriter, r *http.Request, id Identity) {
 	rows, err := g.DB.Query(r.Context(), `SELECT id, name, created_at FROM projects WHERE tenant_id=$1 ORDER BY created_at`, id.TenantID)
 	if err != nil {
 		writeErr(w, 500, "internal", "query failed")
@@ -156,7 +137,7 @@ func (g *Gateway) listProjects(w http.ResponseWriter, r *http.Request, id Identi
 	writeJSON(w, 200, out)
 }
 
-func (g *Gateway) createProject(w http.ResponseWriter, r *http.Request, id Identity) {
+func (g *Service) createProject(w http.ResponseWriter, r *http.Request, id Identity) {
 	var in struct{ Name string }
 	if !decode(r, &in) || strings.TrimSpace(in.Name) == "" {
 		writeErr(w, 400, "invalid_request", "name is required")
@@ -173,13 +154,13 @@ func (g *Gateway) createProject(w http.ResponseWriter, r *http.Request, id Ident
 }
 
 // ownsProject guards every project-scoped route against cross-tenant access.
-func (g *Gateway) ownsProject(ctx context.Context, id Identity, projectID string) bool {
+func (g *Service) ownsProject(ctx context.Context, id Identity, projectID string) bool {
 	var ok bool
 	err := g.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM projects WHERE id=$1 AND tenant_id=$2)`, projectID, id.TenantID).Scan(&ok)
 	return err == nil && ok
 }
 
-func (g *Gateway) listEnvironments(w http.ResponseWriter, r *http.Request, id Identity) {
+func (g *Service) listEnvironments(w http.ResponseWriter, r *http.Request, id Identity) {
 	pid := r.PathValue("projectId")
 	if !g.ownsProject(r.Context(), id, pid) {
 		writeErr(w, 404, "not_found", "project not found")
@@ -201,7 +182,7 @@ func (g *Gateway) listEnvironments(w http.ResponseWriter, r *http.Request, id Id
 	writeJSON(w, 200, out)
 }
 
-func (g *Gateway) createEnvironment(w http.ResponseWriter, r *http.Request, id Identity) {
+func (g *Service) createEnvironment(w http.ResponseWriter, r *http.Request, id Identity) {
 	pid := r.PathValue("projectId")
 	var in struct{ Name string }
 	if !decode(r, &in) || strings.TrimSpace(in.Name) == "" {
@@ -222,7 +203,7 @@ func (g *Gateway) createEnvironment(w http.ResponseWriter, r *http.Request, id I
 	writeJSON(w, 201, e)
 }
 
-func (g *Gateway) createAPIKey(w http.ResponseWriter, r *http.Request, id Identity) {
+func (g *Service) createAPIKey(w http.ResponseWriter, r *http.Request, id Identity) {
 	pid := r.PathValue("projectId")
 	var in struct {
 		EnvironmentID string `json:"environmentId"`
@@ -252,7 +233,7 @@ func (g *Gateway) createAPIKey(w http.ResponseWriter, r *http.Request, id Identi
 	writeJSON(w, 201, map[string]string{"id": keyID, "key": raw, "prefix": raw[:8]})
 }
 
-func (g *Gateway) revokeAPIKey(w http.ResponseWriter, r *http.Request, id Identity) {
+func (g *Service) revokeAPIKey(w http.ResponseWriter, r *http.Request, id Identity) {
 	var hash string
 	err := g.DB.QueryRow(r.Context(), `
 		UPDATE api_keys SET status='revoked', revoked_at=now()

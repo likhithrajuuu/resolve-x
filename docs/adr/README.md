@@ -25,6 +25,7 @@ Technology choices in Resolve-X must be supported by a documented decision.
 | [ADR-011](ADR-011-collector-integration.md)            | Agent/Collector-Based Customer Integration            | Accepted |
 | [ADR-012](ADR-012-telemetry-analytics-store.md)        | PostgreSQL Is Not the Primary Telemetry Analytics Store | Accepted |
 | [ADR-013](ADR-013-self-observability.md)               | Resolve-X Must Be Observable                          | Accepted |
+| [ADR-014](ADR-014-kong-api-gateway.md)                  | Use Kong Gateway (OSS) as the API Gateway             | Accepted |
 
 ---
 

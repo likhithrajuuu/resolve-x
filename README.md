@@ -70,7 +70,7 @@ Resolve-X is designed to support applications written in different languages and
 
 Initial targets:
 
-* Java / Spring Boot
+* Go (platform services), Next.js (dashboard and marketing site)
 * Python / FastAPI
 * Node.js
 * Go
@@ -258,7 +258,7 @@ Significant architectural decisions will be documented using Architecture Decisi
 
 | Area                         | Initial Technology     |
 | ---------------------------- | ---------------------- |
-| Backend                      | Java / Spring Boot     |
+| Backend                      | Go                     |
 | API                          | REST                   |
 | Internal RPC                 | gRPC where justified   |
 | Event streaming              | Apache Kafka           |

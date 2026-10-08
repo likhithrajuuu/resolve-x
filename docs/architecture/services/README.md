@@ -37,7 +37,7 @@ APIs and schemas in these documents are **initial designs**. They will be refine
 
 ## Conventions for All Services
 
-* Spring Boot, one deployable per service.
+* Go, one deployable per service (`backend/cmd/<service>`).
 * REST APIs versioned under `/api/v1`.
 * Every request and event carries tenant context (ADR-010).
 * Health endpoints: `/actuator/health/liveness` and `/actuator/health/readiness`.

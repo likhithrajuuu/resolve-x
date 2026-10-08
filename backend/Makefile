@@ -1,6 +1,6 @@
 COMPOSE := docker compose -f deploy/docker-compose.yml
 
-.PHONY: build test up down logs load fmt
+.PHONY: build test up down logs load fmt kong-check
 build:        ## compile all services into bin/
 	go build -o bin/ ./cmd/...
 test:
@@ -12,6 +12,8 @@ up:           ## start the full local stack
 down:
 	$(COMPOSE) down -v
 logs:
-	$(COMPOSE) logs -f ingestion processor gateway
+	$(COMPOSE) logs -f ingestion processor tenancy kong
 load:         ## 30s load test against local ingestion
 	go run ./cmd/loadgen -url http://localhost:4318 -c 64 -d 30s -spans 100
+kong-check:   ## validate deploy/kong/kong.yml
+	docker run --rm -v $(PWD)/deploy/kong/kong.yml:/kong.yml:ro -e KONG_DATABASE=off kong:3.9 kong config parse /kong.yml

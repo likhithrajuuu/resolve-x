@@ -29,3 +29,9 @@ target/
 # IDE
 .idea/
 *.iml
+
+# Go / Node
+backend/bin/
+web/node_modules/
+web/.next/
+.DS_Store

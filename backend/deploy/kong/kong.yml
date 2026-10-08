@@ -1,0 +1,43 @@
+# Kong Gateway OSS, DB-less. This file IS the gateway configuration; change it
+# in git, not through the Admin API. Validate with: make kong-check
+_format_version: "3.0"
+_transform: true
+
+services:
+  # Tenancy and access management (projects, environments, API keys).
+  - name: tenancy
+    url: http://tenancy:8080
+    connect_timeout: 2000
+    read_timeout: 10000
+    write_timeout: 10000
+    retries: 1
+    routes:
+      - name: tenancy-projects
+        paths: ["/api/v1/projects"]
+        strip_path: false
+
+  # Add routes here as services are built, one Kong service each, e.g.
+  #   incident-service  -> /api/v1/incidents
+  #   service-registry  -> /api/v1/services, /api/v1/dependencies
+  #   analysis-service  -> /api/v1/analyses
+  # OTLP is intentionally NOT routed through Kong: ingestion has very different
+  # load characteristics and is exposed directly (api-gateway.md, Does Not Own).
+
+plugins:
+  - name: correlation-id
+    config: { header_name: X-Request-Id, generator: uuid, echo_downstream: true }
+  - name: request-size-limiting
+    config: { allowed_payload_size: 1, size_unit: megabytes }   # API calls only
+  - name: rate-limiting
+    config:
+      second: 50            # per client IP; per-tenant limits arrive with consumer auth
+      policy: local         # use redis policy when running >1 Kong replica
+      fault_tolerant: true
+  - name: cors
+    config:
+      origins: ["http://localhost:3000", "http://localhost:3100"]
+      methods: [GET, POST, DELETE, OPTIONS]
+      headers: [Authorization, Content-Type, X-Request-Id]
+      exposed_headers: [X-Request-Id]
+      max_age: 3600
+  - name: prometheus

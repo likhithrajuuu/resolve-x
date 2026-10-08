@@ -40,7 +40,7 @@ M8  Production Readiness
 
 ### Scope
 
-* Multi-module Java / Spring Boot project structure.
+* Go monorepo (`backend/`) and Next.js app (`web/`).
 * Docker Compose environment with Kafka, PostgreSQL and Redis.
 * Shared conventions for logging, configuration, error handling and tenant context.
 * Database migration tooling.
