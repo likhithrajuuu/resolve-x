@@ -1,0 +1,6 @@
+#!/Users/likhithrajup/Developer/resolve-x/sdk/python/.venv/bin/python3
+import sys
+from pytest import console_main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(console_main())

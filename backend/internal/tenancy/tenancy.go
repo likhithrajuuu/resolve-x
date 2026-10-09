@@ -31,6 +31,7 @@ type Service struct {
 func (g *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	g.mountAuth(mux)
+	g.mountDashboards(mux)
 	mux.HandleFunc("GET /api/v1/projects", g.secure(g.listProjects))
 	mux.HandleFunc("POST /api/v1/projects", g.secure(g.createProject))
 	mux.HandleFunc("GET /api/v1/projects/{projectId}/environments", g.secure(g.listEnvironments))

@@ -13,7 +13,7 @@ services:
     retries: 1
     routes:
       - name: tenancy-projects
-        paths: ["/api/v1/projects"]
+        paths: ["/api/v1/projects", "/api/v1/dashboards"]
         strip_path: false
       - name: tenancy-auth
         paths: ["/api/v1/auth"]
@@ -35,7 +35,7 @@ services:
     url: http://incident:8082
     routes:
       - name: incident-api
-        paths: ["/api/v1/incidents", "/api/v1/analyses", "/api/v1/deployments", "/api/v1/webhooks"]
+        paths: ["/api/v1/incidents", "/api/v1/analyses", "/api/v1/deployments", "/api/v1/webhooks", "/api/v1/alert-rules", "/api/v1/slos"]
         strip_path: false
 
 # OTLP is intentionally NOT routed through Kong: ingestion has very different
@@ -54,7 +54,7 @@ plugins:
   - name: cors
     config:
       origins: ["http://localhost:3000", "http://localhost:3100"]
-      methods: [GET, POST, DELETE, OPTIONS]
+      methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
       headers: [Authorization, Content-Type, X-Request-Id]
       exposed_headers: [X-Request-Id]
       max_age: 3600

@@ -64,3 +64,18 @@ func TestDecodeRejectsGarbage(t *testing.T) {
 		t.Fatal("expected gzip error")
 	}
 }
+
+func TestDecodeOTLPJSONUsesHexIDs(t *testing.T) {
+	// Exactly what an OTLP/JSON exporter sends: hex IDs, string int64s.
+	js := `{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"web"}}]},
+	"scopeSpans":[{"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174",
+	"parentSpanId":"eee19b7ec3c1b173","name":"GET /","kind":2,"startTimeUnixNano":"1544712660000000000","endTimeUnixNano":"1544712661000000000"}]}]}]}`
+	d, err := DecodeTraces(Tenant{ID: "t"}, []byte(js), "application/json", "")
+	if err != nil || len(d.Spans) != 1 {
+		t.Fatalf("err=%v spans=%d", err, len(d.Spans))
+	}
+	s := d.Spans[0]
+	if s.TraceID != "5b8efff798038103d269b633813fc60c" || s.SpanID != "eee19b7ec3c1b174" || s.ParentSpanID != "eee19b7ec3c1b173" || s.DurationNs != 1_000_000_000 {
+		t.Fatalf("ids/duration wrong: %+v", s)
+	}
+}

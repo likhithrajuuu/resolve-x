@@ -57,6 +57,7 @@ func main() {
 			log.Error("consumer", "err", err)
 		}
 	}()
+	go (&incident.Evaluator{Svc: svc, CH: ch, Interval: config.Duration("RULE_INTERVAL", 30*time.Second)}).Run(ctx)
 	if config.String("DETECTOR_ENABLED", "true") == "true" {
 		det := &incident.Detector{Svc: svc, CH: ch, Interval: config.Duration("DETECTOR_INTERVAL", 30*time.Second),
 			MinSpans: uint64(config.Int("DETECTOR_MIN_SPANS", 20)), ErrorRate: 0.10, LatencyFactor: 3}
@@ -67,7 +68,7 @@ func main() {
 	health.SetReady(true)
 	platform.ServeOps(ctx, config.String("OPS_ADDR", ":9100"), health, log)
 
-	api := &incident.API{Svc: svc, Keys: auth.NewKeyStore(db, rdb), Secret: []byte(secret)}
+	api := &incident.API{CH: ch, Svc: svc, Keys: auth.NewKeyStore(db, rdb), Secret: []byte(secret)}
 	srv := &http.Server{Addr: config.String("HTTP_ADDR", ":8082"), Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second}
 	log.Info("incident-service started", "addr", srv.Addr)
 	if err := platform.Serve(ctx, srv, log); err != nil {

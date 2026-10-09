@@ -9,9 +9,11 @@ import (
 
 	"github.com/resolvex/resolve-x/backend/internal/auth"
 	"github.com/resolvex/resolve-x/backend/internal/authn"
+	"github.com/resolvex/resolve-x/backend/internal/store"
 )
 
 type API struct {
+	CH     *store.CH
 	Svc    *Service
 	Keys   *auth.KeyStore
 	Secret []byte
@@ -27,6 +29,13 @@ func (a *API) Handler() http.Handler {
 	user.HandleFunc("POST /api/v1/analyses/{id}/approve", a.decide("approved"))
 	user.HandleFunc("POST /api/v1/analyses/{id}/reject", a.decide("rejected"))
 	user.HandleFunc("GET /api/v1/deployments", a.deployments)
+	user.HandleFunc("GET /api/v1/alert-rules", a.listRules)
+	user.HandleFunc("POST /api/v1/alert-rules", a.createRule)
+	user.HandleFunc("PATCH /api/v1/alert-rules/{id}", a.patchRule)
+	user.HandleFunc("DELETE /api/v1/alert-rules/{id}", a.deleteRule)
+	user.HandleFunc("GET /api/v1/slos", a.listSLOs)
+	user.HandleFunc("POST /api/v1/slos", a.createSLO)
+	user.HandleFunc("DELETE /api/v1/slos/{id}", a.deleteSLO)
 
 	root := http.NewServeMux()
 	root.HandleFunc("POST /api/v1/webhooks/alerts", a.alertWebhook)
@@ -273,4 +282,93 @@ func (a *API) deploymentWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	authn.WriteJSON(w, 201, map[string]string{"id": id})
+}
+
+func (a *API) listRules(w http.ResponseWriter, r *http.Request) {
+	out, err := a.Svc.ListRules(r.Context(), claims(r).Tenant)
+	if err != nil {
+		serverErr(w, err)
+		return
+	}
+	authn.WriteJSON(w, 200, out)
+}
+
+func (a *API) createRule(w http.ResponseWriter, r *http.Request) {
+	var in Rule
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	if err := in.Validate(); err != nil {
+		authn.WriteError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	out, err := a.Svc.CreateRule(r.Context(), claims(r).Tenant, in)
+	if err != nil {
+		serverErr(w, err)
+		return
+	}
+	authn.WriteJSON(w, 201, out)
+}
+
+func (a *API) patchRule(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Enabled *bool }
+	if !decodeBody(w, r, &in) || in.Enabled == nil {
+		return
+	}
+	if err := a.Svc.SetRuleEnabled(r.Context(), claims(r).Tenant, r.PathValue("id"), *in.Enabled); err != nil {
+		serverErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) deleteRule(w http.ResponseWriter, r *http.Request) {
+	if err := a.Svc.DeleteRule(r.Context(), claims(r).Tenant, r.PathValue("id")); err != nil {
+		serverErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) listSLOs(w http.ResponseWriter, r *http.Request) {
+	slos, err := a.Svc.ListSLOs(r.Context(), claims(r).Tenant)
+	if err != nil {
+		serverErr(w, err)
+		return
+	}
+	out := make([]SLOStatus, 0, len(slos))
+	for _, o := range slos {
+		st, err := Evaluate(r.Context(), a.CH, claims(r).Tenant, o, time.Now())
+		if err != nil {
+			serverErr(w, err)
+			return
+		}
+		out = append(out, st)
+	}
+	authn.WriteJSON(w, 200, out)
+}
+
+func (a *API) createSLO(w http.ResponseWriter, r *http.Request) {
+	var in SLO
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	if err := in.Validate(); err != nil {
+		authn.WriteError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	out, err := a.Svc.CreateSLO(r.Context(), claims(r).Tenant, in)
+	if err != nil {
+		serverErr(w, err)
+		return
+	}
+	authn.WriteJSON(w, 201, out)
+}
+
+func (a *API) deleteSLO(w http.ResponseWriter, r *http.Request) {
+	if err := a.Svc.DeleteSLO(r.Context(), claims(r).Tenant, r.PathValue("id")); err != nil {
+		serverErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

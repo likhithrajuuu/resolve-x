@@ -47,7 +47,11 @@ func inflate(body []byte, enc string) ([]byte, error) {
 
 func unmarshal(body []byte, contentType string, m proto.Message) error {
 	if contentType == "application/json" {
-		return protojson.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(body, m)
+		fixed, err := normalizeOTLPJSON(body)
+		if err != nil {
+			return err
+		}
+		return protojson.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(fixed, m)
 	}
 	return proto.Unmarshal(body, m)
 }

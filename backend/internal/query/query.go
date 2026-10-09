@@ -31,6 +31,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/logs", a.logs)
 	mux.HandleFunc("GET /api/v1/metrics", a.metricNames)
 	mux.HandleFunc("GET /api/v1/metrics/series", a.metricSeries)
+	mux.HandleFunc("GET /api/v1/metrics/labels", a.metricLabels)
+	mux.HandleFunc("GET /api/v1/services/{name}/operations", a.operations)
+	mux.HandleFunc("GET /api/v1/logs/volume", a.logVolume)
+	mux.HandleFunc("GET /api/v1/logs/patterns", a.logPatterns)
 	return authn.Require(a.Secret, mux)
 }
 
@@ -393,30 +397,227 @@ func (a *API) metricNames(w http.ResponseWriter, r *http.Request) {
 	authn.WriteJSON(w, 200, out)
 }
 
+// aggregations is a whitelist: the chosen function name is spliced into SQL.
+var aggregations = map[string]string{
+	"avg": "avg(value)", "sum": "sum(value)", "max": "max(value)", "min": "min(value)",
+	"p50": "quantile(0.5)(value)", "p95": "quantile(0.95)(value)", "p99": "quantile(0.99)(value)",
+	"rate": "sum(value)", "count": "count()",
+}
+
+type seriesPoint struct {
+	T     time.Time `json:"t"`
+	Value float64   `json:"value"`
+}
+type series struct {
+	Group  string        `json:"group"`
+	Points []seriesPoint `json:"points"`
+}
+
+// metricSeries returns one time series per group. groupBy is an attribute key
+// ("" = a single series; "service" groups by service).
 func (a *API) metricSeries(w http.ResponseWriter, r *http.Request) {
 	since, d := window(r)
-	svc, name := r.URL.Query().Get("service"), r.URL.Query().Get("name")
-	if !nameRe.MatchString(svc) || !nameRe.MatchString(name) {
-		authn.WriteError(w, 400, "invalid_request", "service and name are required")
+	q := r.URL.Query()
+	name, svc, groupBy := q.Get("name"), q.Get("service"), q.Get("groupBy")
+	if !nameRe.MatchString(name) || (svc != "" && !nameRe.MatchString(svc)) || (groupBy != "" && !nameRe.MatchString(groupBy)) {
+		authn.WriteError(w, 400, "invalid_request", "invalid name, service or groupBy")
 		return
 	}
-	rows, err := a.CH.Conn().Query(r.Context(), fmt.Sprintf(`
-		SELECT toStartOfInterval(ts, INTERVAL %d SECOND) AS t, avg(value) FROM metrics
-		WHERE tenant_id = ? AND service = ? AND name = ? AND ts >= ? GROUP BY t ORDER BY t`, bucketSeconds(d)),
-		tenant(r), svc, name, since)
+	agg, ok := aggregations[q.Get("agg")]
+	if !ok {
+		agg = aggregations["avg"]
+	}
+	bucket := bucketSeconds(d)
+	groupExpr, args := "''", []any{}
+	switch groupBy {
+	case "":
+	case "service":
+		groupExpr = "service"
+	default:
+		groupExpr, args = "attrs[?]", append(args, groupBy)
+	}
+	sql := fmt.Sprintf(`SELECT toStartOfInterval(ts, INTERVAL %d SECOND) AS t, %s AS g, %s
+		FROM metrics WHERE tenant_id = ? AND name = ? AND ts >= ?`, bucket, groupExpr, agg)
+	args = append(args, tenant(r), name, since)
+	if svc != "" {
+		sql += " AND service = ?"
+		args = append(args, svc)
+	}
+	sql += " GROUP BY t, g ORDER BY g, t LIMIT 20000"
+	rows, err := a.CH.Conn().Query(r.Context(), sql, args...)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer rows.Close()
+	byGroup := map[string]*series{}
+	var order []string
+	for rows.Next() {
+		var t time.Time
+		var g string
+		var v float64
+		if err := rows.Scan(&t, &g, &v); err != nil {
+			fail(w, err)
+			return
+		}
+		if byGroup[g] == nil {
+			byGroup[g] = &series{Group: g}
+			order = append(order, g)
+		}
+		if q.Get("agg") == "rate" {
+			v /= float64(bucket)
+		}
+		byGroup[g].Points = append(byGroup[g].Points, seriesPoint{t, v})
+	}
+	out := make([]series, 0, len(order))
+	for _, g := range order {
+		out = append(out, *byGroup[g])
+	}
+	if len(out) > 25 { // keep the UI legible; the biggest series come first by total
+		out = out[:25]
+	}
+	authn.WriteJSON(w, 200, out)
+}
+
+func (a *API) metricLabels(w http.ResponseWriter, r *http.Request) {
+	since, _ := window(r)
+	name := r.URL.Query().Get("name")
+	if !nameRe.MatchString(name) {
+		authn.WriteError(w, 400, "invalid_request", "name is required")
+		return
+	}
+	rows, err := a.CH.Conn().Query(r.Context(), `SELECT DISTINCT arrayJoin(mapKeys(attrs)) AS k FROM metrics
+		WHERE tenant_id = ? AND name = ? AND ts >= ? ORDER BY k LIMIT 100`, tenant(r), name, since)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			fail(w, err)
+			return
+		}
+		out = append(out, k)
+	}
+	authn.WriteJSON(w, 200, out)
+}
+
+type opRow struct {
+	Name      string  `json:"name"`
+	Calls     uint64  `json:"calls"`
+	Errors    uint64  `json:"errors"`
+	ErrorRate float64 `json:"errorRate"`
+	P50Ms     float64 `json:"p50Ms"`
+	P95Ms     float64 `json:"p95Ms"`
+	P99Ms     float64 `json:"p99Ms"`
+}
+
+func (a *API) operations(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		authn.WriteError(w, 400, "invalid_request", "invalid service name")
+		return
+	}
+	since, _ := window(r)
+	rows, err := a.CH.Conn().Query(r.Context(), `
+		SELECT name, count(), countIf(status_code = 2), quantile(0.5)(duration_ns) / 1e6, quantile(0.95)(duration_ns) / 1e6, quantile(0.99)(duration_ns) / 1e6
+		FROM spans WHERE tenant_id = ? AND service = ? AND start_time >= ? AND `+isEntry+`
+		GROUP BY name ORDER BY count() DESC LIMIT 100`, tenant(r), name, since)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer rows.Close()
+	out := []opRow{}
+	for rows.Next() {
+		var o opRow
+		if err := rows.Scan(&o.Name, &o.Calls, &o.Errors, &o.P50Ms, &o.P95Ms, &o.P99Ms); err != nil {
+			fail(w, err)
+			return
+		}
+		if o.Calls > 0 {
+			o.ErrorRate = float64(o.Errors) / float64(o.Calls)
+		}
+		out = append(out, o)
+	}
+	authn.WriteJSON(w, 200, out)
+}
+
+func (a *API) logVolume(w http.ResponseWriter, r *http.Request) {
+	since, d := window(r)
+	args := []any{tenant(r), since}
+	sql := fmt.Sprintf(`SELECT toStartOfInterval(ts, INTERVAL %d SECOND) AS t, countIf(severity_number >= 17), countIf(severity_number >= 13 AND severity_number < 17), countIf(severity_number < 13)
+		FROM logs WHERE tenant_id = ? AND ts >= ?`, bucketSeconds(d))
+	if svc := r.URL.Query().Get("service"); svc != "" {
+		if !nameRe.MatchString(svc) {
+			authn.WriteError(w, 400, "invalid_request", "invalid service")
+			return
+		}
+		sql += " AND service = ?"
+		args = append(args, svc)
+	}
+	rows, err := a.CH.Conn().Query(r.Context(), sql+" GROUP BY t ORDER BY t", args...)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer rows.Close()
+	type v struct {
+		T     time.Time `json:"t"`
+		Error uint64    `json:"error"`
+		Warn  uint64    `json:"warn"`
+		Info  uint64    `json:"info"`
+	}
+	out := []v{}
+	for rows.Next() {
+		var x v
+		if err := rows.Scan(&x.T, &x.Error, &x.Warn, &x.Info); err != nil {
+			fail(w, err)
+			return
+		}
+		out = append(out, x)
+	}
+	authn.WriteJSON(w, 200, out)
+}
+
+// logPatterns clusters messages by masking UUIDs and numbers, so thousands of
+// "timeout after 2031 ms for user 8841" lines collapse into one pattern.
+func (a *API) logPatterns(w http.ResponseWriter, r *http.Request) {
+	since, _ := window(r)
+	args := []any{tenant(r), since}
+	sql := `SELECT replaceRegexpAll(replaceRegexpAll(substring(body, 1, 300), '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', '<uuid>'), '[0-9]+', '<n>') AS pattern,
+		service, count(), max(severity_number), min(ts), max(ts), any(substring(body, 1, 300))
+		FROM logs WHERE tenant_id = ? AND ts >= ?`
+	if svc := r.URL.Query().Get("service"); svc != "" {
+		if !nameRe.MatchString(svc) {
+			authn.WriteError(w, 400, "invalid_request", "invalid service")
+			return
+		}
+		sql += " AND service = ?"
+		args = append(args, svc)
+	}
+	rows, err := a.CH.Conn().Query(r.Context(), sql+" GROUP BY pattern, service ORDER BY count() DESC LIMIT 100", args...)
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	defer rows.Close()
 	type p struct {
-		T     time.Time `json:"t"`
-		Value float64   `json:"value"`
+		Pattern  string    `json:"pattern"`
+		Service  string    `json:"service"`
+		Count    uint64    `json:"count"`
+		Severity uint8     `json:"severityNumber"`
+		First    time.Time `json:"firstSeen"`
+		Last     time.Time `json:"lastSeen"`
+		Sample   string    `json:"sample"`
 	}
 	out := []p{}
 	for rows.Next() {
 		var x p
-		if err := rows.Scan(&x.T, &x.Value); err != nil {
+		if err := rows.Scan(&x.Pattern, &x.Service, &x.Count, &x.Severity, &x.First, &x.Last, &x.Sample); err != nil {
 			fail(w, err)
 			return
 		}
