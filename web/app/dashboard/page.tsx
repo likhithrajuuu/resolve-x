@@ -1,127 +1,129 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
-import { api, useApi, type Incident, type ServiceRow } from "@/lib/api";
-import { fmtNum, fmtPct, timeAgo } from "@/lib/format";
-import { btn, btnGhost, Card, Empty, ErrorNote, input, Loading, PageHeader, SeverityBadge, StatusLabel } from "@/components/ui";
+import { useEffect, useState } from "react";
+import { api, useApi, type Deployment, type Incident, type IncidentDetail, type Point, type ServiceRow } from "@/lib/api";
+import { fmtMs, fmtNum, fmtPct, timeAgo } from "@/lib/format";
+import { Legend, LineChart, type Line } from "@/components/charts";
+import { SloList } from "@/components/widgets";
+import { btn, Card, ErrorNote, Loading, PageHeader, SeverityBadge, StatusLabel, WindowSelect } from "@/components/ui";
 
-export default function IncidentsPage() {
-  const [filter, setFilter] = useState("");
-  const incidents = useApi<Incident[]>(`/api/v1/incidents${filter ? `?status=${filter}` : ""}`, 5000);
-  const services = useApi<ServiceRow[]>("/api/v1/services?window=1h", 15000);
-  const [creating, setCreating] = useState(false);
+const health = (s: ServiceRow) => (s.errorRate >= 0.05 ? "bad" : s.errorRate >= 0.01 ? "warn" : "ok") as "bad" | "warn" | "ok";
+const tone = { ok: "border-accent-2/30 bg-accent-2/5", warn: "border-warn/40 bg-warn/5", bad: "border-danger/50 bg-danger/10" } as const;
+const dot = { ok: "bg-accent-2", warn: "bg-warn", bad: "bg-danger" } as const;
 
-  const all = incidents.data ?? [];
-  const open = all.filter((i) => i.status !== "resolved").length;
-  const spans = (services.data ?? []).reduce((a, s) => a + s.spans, 0);
-  const errs = (services.data ?? []).reduce((a, s) => a + s.errors, 0);
+export default function Overview() {
+  const [win, setWin] = useState("1h");
+  const services = useApi<ServiceRow[]>(`/api/v1/services?window=${win}`, 10000);
+  const incidents = useApi<Incident[]>("/api/v1/incidents", 8000);
+  const deploys = useApi<Deployment[]>("/api/v1/deployments", 30000);
 
-  const kpis = [
-    ["Open incidents", incidents.data ? String(open) : "–"],
-    ["Services seen (1h)", services.data ? String(services.data.length) : "–"],
-    ["Entry spans (1h)", services.data ? fmtNum(spans) : "–"],
-    ["Error rate (1h)", services.data ? fmtPct(spans ? errs / spans : 0) : "–"],
-  ];
+  const active = (incidents.data ?? []).filter((i) => i.status !== "resolved");
+  const svc = services.data ?? [];
+  const unhealthy = svc.filter((s) => health(s) !== "ok").length;
+  const noData = services.data !== null && svc.length === 0 && incidents.data !== null && (incidents.data?.length ?? 0) === 0;
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-      <PageHeader title="Incidents">
-        <select aria-label="Filter by status" value={filter} onChange={(e) => setFilter(e.target.value)} className="rounded-md border border-line bg-surface px-2.5 py-2 text-sm">
-          <option value="">All</option>
-          {["open", "investigating", "identified", "resolved"].map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <button className={btn} onClick={() => setCreating((v) => !v)}>{creating ? "Cancel" : "New incident"}</button>
-      </PageHeader>
+    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      <PageHeader title="Overview"><WindowSelect value={win} onChange={setWin} /></PageHeader>
 
-      <dl className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {kpis.map(([label, value]) => (
-          <Card key={label} className="p-4">
-            <dt className="text-xs text-muted">{label}</dt>
-            <dd className="mt-1 text-xl font-semibold">{value}</dd>
-          </Card>
-        ))}
-      </dl>
-
-      {services.data?.length === 0 && incidents.data?.length === 0 && (
-        <Card className="mt-6 border-accent/40 p-5">
-          <h2 className="font-medium">Connect your first application</h2>
-          <p className="mt-1 text-sm text-muted">No telemetry has arrived yet. Create an API key and point an OpenTelemetry SDK at Resolve-X; services and incidents will appear here.</p>
-          <Link href="/dashboard/settings" className={`${btn} mt-4 inline-block`}>Set up an API key</Link>
+      {noData ? (
+        <Card className="mt-6 border-accent/40 p-6">
+          <h2 className="text-lg font-medium">Connect your first application</h2>
+          <p className="mt-1 text-sm text-muted">No telemetry yet. Install an SDK, add your API key, and services, incidents and SLOs appear here.</p>
+          <Link href="/dashboard/settings" className={`${btn} mt-4 inline-block`}>Get your API key and SDK snippet</Link>
         </Card>
+      ) : (
+        <>
+          <div role="status" className={`mt-6 flex flex-wrap items-center gap-x-6 gap-y-1 rounded-xl border px-5 py-4 ${active.length ? "border-danger/50 bg-danger/10" : unhealthy ? "border-warn/40 bg-warn/5" : "border-accent-2/30 bg-accent-2/5"}`}>
+            <p className="text-lg font-medium">
+              {active.length ? `${active.length} active incident${active.length > 1 ? "s" : ""}` : unhealthy ? `${unhealthy} service${unhealthy > 1 ? "s" : ""} degraded` : services.data ? "All systems healthy" : "Checking…"}
+            </p>
+            {services.data && <p className="text-sm text-muted">{svc.length} services · {fmtNum(svc.reduce((a, s) => a + s.spans, 0))} requests · {fmtPct(svc.reduce((a, s) => a + s.errors, 0) / Math.max(svc.reduce((a, s) => a + s.spans, 0), 1))} errors</p>}
+          </div>
+
+          {active.length > 0 && (
+            <section className="mt-8" aria-labelledby="attn">
+              <h2 id="attn" className="text-sm font-medium text-muted">Needs attention</h2>
+              <div className="mt-3 grid gap-4 lg:grid-cols-2">{active.slice(0, 4).map((i) => <IncidentCard key={i.id} incident={i} />)}</div>
+            </section>
+          )}
+
+          <section className="mt-8" aria-labelledby="svc">
+            <div className="flex items-baseline justify-between"><h2 id="svc" className="text-sm font-medium text-muted">Service health</h2><Link href="/dashboard/dependencies" className="text-xs text-accent">View map →</Link></div>
+            {services.error && <div className="mt-3"><ErrorNote message={services.error} /></div>}
+            {services.loading && !services.data ? <Loading /> : (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {svc.map((s) => (
+                  <Link key={s.name} href={`/dashboard/services/${encodeURIComponent(s.name)}`} className={`rounded-xl border p-4 transition-colors hover:bg-surface-2 ${tone[health(s)]}`}>
+                    <p className="flex items-center gap-2 font-medium"><span className={`h-2 w-2 rounded-full ${dot[health(s)]}`} />{s.name}</p>
+                    <p className="mt-2 grid grid-cols-3 gap-1 text-xs text-muted">
+                      <span><b className="block text-sm text-fg">{fmtNum(s.spans)}</b>req</span>
+                      <span><b className={`block text-sm ${s.errorRate >= 0.05 ? "text-danger" : "text-fg"}`}>{fmtPct(s.errorRate)}</b>err</span>
+                      <span><b className="block text-sm text-fg">{fmtMs(s.p95Ms)}</b>p95</span>
+                    </p>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <div className="mt-8 grid gap-6 lg:grid-cols-3">
+            <section className="lg:col-span-2" aria-labelledby="traffic">
+              <h2 id="traffic" className="text-sm font-medium text-muted">Traffic by service</h2>
+              <Card className="mt-3 p-4"><Fleet services={svc.slice(0, 6)} win={win} deploys={deploys.data ?? []} /></Card>
+            </section>
+            <section aria-labelledby="slo">
+              <div className="flex items-baseline justify-between"><h2 id="slo" className="text-sm font-medium text-muted">SLOs</h2><Link href="/dashboard/slos" className="text-xs text-accent">Manage →</Link></div>
+              <Card className="mt-3 p-4"><SloList /></Card>
+              <h2 className="mt-6 text-sm font-medium text-muted">Recent deployments</h2>
+              <Card className="mt-3 divide-y divide-line">
+                {(deploys.data ?? []).slice(0, 5).map((d) => (
+                  <div key={d.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm"><span className="truncate">{d.service} <span className="font-mono text-xs text-accent">{d.version}</span></span><span className="shrink-0 text-xs text-muted">{timeAgo(d.at)}</span></div>
+                ))}
+                {!deploys.data?.length && <p className="p-4 text-sm text-muted">None recorded. Send them with the SDK&apos;s <code className="font-mono text-xs">markDeployment()</code>.</p>}
+              </Card>
+            </section>
+          </div>
+        </>
       )}
-
-      {creating && <NewIncident onDone={() => { setCreating(false); void incidents.reload(); }} />}
-
-      <Card className="mt-8 overflow-hidden">
-        {incidents.error && <div className="p-4"><ErrorNote message={incidents.error} /></div>}
-        {incidents.loading && !incidents.data ? <Loading /> : all.length === 0 ? (
-          <Empty>
-            No incidents. Resolve-X opens one automatically when error rate or latency spikes, or you can{" "}
-            <button className="text-accent underline" onClick={() => setCreating(true)}>create one</button>.
-          </Empty>
-        ) : (
-          <ul className="divide-y divide-line">
-            {all.map((i) => (
-              <li key={i.id}>
-                <Link href={`/dashboard/incidents/${i.id}`} className="flex flex-col gap-2 p-4 transition-colors hover:bg-surface-2 sm:flex-row sm:items-center sm:gap-4">
-                  <SeverityBadge s={i.severity} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">{i.title}</p>
-                    <p className="mt-0.5 truncate text-sm text-muted">{i.service || "no service"} · {i.source}</p>
-                  </div>
-                  <div className="text-sm sm:text-right">
-                    <StatusLabel s={i.status} />
-                    <p className="text-xs text-muted">{timeAgo(i.createdAt)}</p>
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
     </main>
   );
 }
 
-function NewIncident({ onDone }: { onDone: () => void }) {
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  async function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setBusy(true);
-    const f = new FormData(e.currentTarget);
-    try {
-      await api("/api/v1/incidents", { method: "POST", body: JSON.stringify(Object.fromEntries(f)) });
-      onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed");
-      setBusy(false);
-    }
-  }
+function IncidentCard({ incident }: { incident: Incident }) {
+  const { data } = useApi<IncidentDetail>(`/api/v1/incidents/${incident.id}`, 8000);
+  const a = data?.analyses[0];
   return (
-    <Card className="mt-6 p-4">
-      <form onSubmit={submit} className="grid gap-3 sm:grid-cols-4">
-        {error && <div className="sm:col-span-4"><ErrorNote message={error} /></div>}
-        <label className="sm:col-span-2 text-sm text-muted">Title
-          <input name="title" required maxLength={200} className={`${input} mt-1`} />
-        </label>
-        <label className="text-sm text-muted">Service
-          <input name="service" placeholder="optional" className={`${input} mt-1`} />
-        </label>
-        <label className="text-sm text-muted">Severity
-          <select name="severity" defaultValue="SEV-2" className={`${input} mt-1`}>
-            {["SEV-1", "SEV-2", "SEV-3"].map((s) => <option key={s}>{s}</option>)}
-          </select>
-        </label>
-        <label className="sm:col-span-4 text-sm text-muted">Description
-          <textarea name="description" rows={2} className={`${input} mt-1`} />
-        </label>
-        <div className="sm:col-span-4 flex gap-2">
-          <button disabled={busy} className={btn}>Open incident</button>
-          <button type="button" className={btnGhost} onClick={onDone}>Cancel</button>
-        </div>
-      </form>
-    </Card>
+    <Link href={`/dashboard/incidents/${incident.id}`} className="block rounded-xl border border-line bg-surface p-5 transition-colors hover:bg-surface-2">
+      <div className="flex items-center gap-3"><SeverityBadge s={incident.severity} /><StatusLabel s={incident.status} /><span className="ml-auto text-xs text-muted">{timeAgo(incident.createdAt)}</span></div>
+      <p className="mt-3 font-medium">{incident.title}</p>
+      {a ? (
+        <>
+          <p className="mt-2 text-xs uppercase tracking-wider text-accent-2">Probable cause · {a.confidence}%</p>
+          <p className="mt-1 text-sm">{a.rootCause}</p>
+          {a.recommendation.description && <p className="mt-2 text-sm text-muted">→ {a.recommendation.description}</p>}
+          {a.approval === "pending" && <p className="mt-3 text-xs text-warn">Awaiting your approval</p>}
+        </>
+      ) : <p className="mt-2 text-sm text-muted">Analysing evidence…</p>}
+    </Link>
   );
+}
+
+/** Request volume per service, with deployment markers. */
+function Fleet({ services, win, deploys }: { services: ServiceRow[]; win: string; deploys: Deployment[] }) {
+  const [lines, setLines] = useState<Line[] | null>(null);
+  const key = services.map((s) => s.name).join("|") + win;
+  useEffect(() => {
+    if (!services.length) return;
+    let live = true;
+    const load = () => Promise.all(services.map((s) => api<Point[]>(`/api/v1/services/${encodeURIComponent(s.name)}/timeseries?window=${win}`).then((pts) => ({ name: s.name, points: pts.map((p) => ({ t: +new Date(p.t), v: p.count })) })).catch(() => null)))
+      .then((r) => { if (live) setLines(r.filter((x): x is Line => !!x)); });
+    void load();
+    const id = setInterval(load, 15000);
+    return () => { live = false; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  if (!lines) return <Loading />;
+  return <><LineChart lines={lines} height={200} format={(v) => fmtNum(Math.round(v))} markers={deploys.map((d) => ({ t: +new Date(d.at), label: `${d.service} ${d.version}` }))} /><Legend lines={lines} /></>;
 }

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "resolvex"
+version = "0.1.0"
+description = "Resolve-X SDK for Python: one-line OpenTelemetry setup for traces, metrics and logs."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "opentelemetry-sdk>=1.27",
+  "opentelemetry-exporter-otlp-proto-http>=1.27",
+  "opentelemetry-instrumentation>=0.48b0",
+]
+
+[project.optional-dependencies]
+# pip install "resolvex[web]" etc. pulls in the instrumentations you need.
+web = ["opentelemetry-instrumentation-flask", "opentelemetry-instrumentation-fastapi", "opentelemetry-instrumentation-requests", "opentelemetry-instrumentation-urllib3"]
+db = ["opentelemetry-instrumentation-sqlalchemy", "opentelemetry-instrumentation-psycopg2", "opentelemetry-instrumentation-redis"]
+host = ["opentelemetry-instrumentation-system-metrics"]
+logging = ["opentelemetry-instrumentation-logging"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

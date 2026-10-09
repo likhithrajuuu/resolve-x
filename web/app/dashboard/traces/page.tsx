@@ -9,8 +9,9 @@ import { Card, Empty, ErrorNote, Loading, PageHeader, WindowSelect } from "@/com
 
 export default function TracesPage() {
   const [win, setWin] = useState("1h");
-  const [service, setService] = useState(useSearchParams().get("service") ?? "");
-  const [errorsOnly, setErrorsOnly] = useState(false);
+  const params = useSearchParams();
+  const [service, setService] = useState(params.get("service") ?? "");
+  const [errorsOnly, setErrorsOnly] = useState(params.get("status") === "error");
 
   const services = useApi<ServiceRow[]>(`/api/v1/services?window=${win}`);
   const qs = new URLSearchParams({ window: win, limit: "50" });

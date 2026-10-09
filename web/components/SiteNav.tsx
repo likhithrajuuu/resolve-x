@@ -3,6 +3,7 @@ import { Logo } from "./Logo";
 
 const links = [
   ["Product", "#product"],
+  ["SDKs", "#sdk"],
   ["How it works", "#how"],
   ["Scale", "#scale"],
   ["Pricing", "#pricing"],

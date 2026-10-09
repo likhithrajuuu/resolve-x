@@ -2,6 +2,7 @@ import Link from "next/link";
 import { IncidentPreview } from "@/components/IncidentPreview";
 import { Logo } from "@/components/Logo";
 import { SiteNav } from "@/components/SiteNav";
+import { SdkSnippets } from "@/components/SdkSnippets";
 
 const features = [
   ["Automatic service discovery", "Services and their dependencies are built from OpenTelemetry and Kubernetes metadata. Nobody maintains a catalog by hand."],
@@ -94,6 +95,21 @@ export default function Home() {
                 <p className="mt-2 text-sm leading-relaxed text-muted">{body}</p>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section id="sdk" className="mx-auto max-w-6xl scroll-mt-16 px-4 pb-20 sm:px-6">
+          <div className="grid gap-10 lg:grid-cols-2 lg:items-center">
+            <div>
+              <h2 className="text-3xl font-semibold tracking-tight">Two lines to instrument a service</h2>
+              <p className="mt-4 text-muted">The Resolve-X SDKs wrap OpenTelemetry. One call turns on traces, metrics and logs, auto-instruments your web framework and database drivers, and links every log line to its trace. No proprietary agent, and you can leave at any time because the data is standard OTLP.</p>
+              <ul className="mt-6 space-y-2 text-sm">
+                {["Node.js and Python SDKs, plus any OpenTelemetry SDK", "Release tracking: mark deployments so incidents point at the change", "Runtime and host metrics included"].map((t) => (
+                  <li key={t} className="flex gap-2"><span className="text-accent-2" aria-hidden>✓</span>{t}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-xl border border-line bg-surface p-5"><SdkSnippets apiKey="rx_your_api_key" ingest="https://ingest.example.com" api="https://api.example.com" /></div>
           </div>
         </section>
 

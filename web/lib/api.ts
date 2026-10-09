@@ -100,3 +100,20 @@ export type SpanRow = {
   statusCode: number; statusMessage: string; attrs: Record<string, string>;
 };
 export type LogRow = { ts: string; service: string; severityNumber: number; severityText: string; body: string; traceId: string; spanId: string };
+
+export type OpRow = { name: string; calls: number; errors: number; errorRate: number; p50Ms: number; p95Ms: number; p99Ms: number };
+export type MetricName = { service: string; name: string; unit: string; kind: string };
+export type MetricSeries = { group: string; points: { t: string; value: number }[] };
+export type LogVolume = { t: string; error: number; warn: number; info: number };
+export type LogPattern = { pattern: string; service: string; count: number; severityNumber: number; firstSeen: string; lastSeen: string; sample: string };
+export type Rule = {
+  id: string; name: string; kind: "error_rate" | "latency_p95" | "metric"; service: string; metric: string; agg: string; op: ">" | "<";
+  threshold: number; windowMinutes: number; severity: Incident["severity"]; enabled: boolean; lastState: "unknown" | "ok" | "firing" | "nodata"; lastValue?: number; lastEvalAt?: string;
+};
+export type SLO = {
+  id: string; name: string; service: string; kind: "availability" | "latency"; objective: number; latencyMs?: number; windowDays: number;
+  total: number; bad: number; sli: number; budgetRemaining: number; burnRate1h: number; status: "ok" | "warning" | "breached" | "nodata";
+};
+export type Deployment = { id: string; service: string; version: string; environment: string; at: string };
+export type Widget = { id: string; type: "metric" | "service" | "logs" | "incidents" | "slo"; title: string; span: 1 | 2; config: Record<string, string> };
+export type DashboardDef = { id: string; name: string; widgets: Widget[]; updatedAt: string };

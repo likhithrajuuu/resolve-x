@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+src/resolvex/__init__.py
+src/resolvex/config.py
+src/resolvex.egg-info/PKG-INFO
+src/resolvex.egg-info/SOURCES.txt
+src/resolvex.egg-info/dependency_links.txt
+src/resolvex.egg-info/requires.txt
+src/resolvex.egg-info/top_level.txt
+tests/test_config.py

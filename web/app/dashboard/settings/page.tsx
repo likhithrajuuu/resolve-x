@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { api, useApi } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
+import { SdkSnippets } from "@/components/SdkSnippets";
 import { btn, btnGhost, Card, ErrorNote, input, Loading, PageHeader } from "@/components/ui";
 
 type Project = { id: string; name: string };
@@ -52,7 +53,7 @@ export default function SettingsPage() {
       <h2 className="mt-8 text-sm font-medium text-muted">Connect your application</h2>
       <Card className="mt-3 p-5">
         <p className="text-sm text-muted">
-          Project <span className="text-fg">{project?.name}</span>. Create an API key, then point any OpenTelemetry SDK or collector at Resolve-X.
+          Project <span className="text-fg">{project?.name}</span>. Create an API key, then install an SDK below.
         </p>
         <form onSubmit={createKey} className="mt-4 flex flex-wrap items-end gap-3">
           <label className="text-sm text-muted">Environment
@@ -62,16 +63,11 @@ export default function SettingsPage() {
           </label>
           <button className={btn} disabled={!project}>Create API key</button>
         </form>
-        {newKey && (
-          <div className="mt-4 rounded-md border border-accent-2/40 bg-accent-2/10 p-4">
-            <p className="text-sm font-medium text-accent-2">Copy this key now. It will not be shown again.</p>
-            <pre className="mt-2 overflow-x-auto rounded bg-bg p-3 font-mono text-xs">{`export OTEL_EXPORTER_OTLP_ENDPOINT=${ingest}
-export OTEL_EXPORTER_OTLP_HEADERS="x-resolvex-key=${newKey}"
-export OTEL_SERVICE_NAME=my-service`}</pre>
-            <button className={`${btnGhost} mt-3`} onClick={() => navigator.clipboard?.writeText(newKey)}>Copy key</button>
-          </div>
-        )}
+        {newKey && <p className="mt-4 rounded-md border border-accent-2/40 bg-accent-2/10 p-3 text-sm font-medium text-accent-2">Your key is filled into the snippets below. Copy it now; it will not be shown again.</p>}
       </Card>
+
+      <h2 className="mt-8 text-sm font-medium text-muted">Install an SDK</h2>
+      <Card className="mt-3 p-5"><SdkSnippets apiKey={newKey ?? "rx_your_api_key"} ingest={ingest} api={process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"} /></Card>
 
       <h2 className="mt-8 text-sm font-medium text-muted">API keys</h2>
       <Card className="mt-3 divide-y divide-line">

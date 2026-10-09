@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { useApi, type Edge, type Incident, type Point } from "@/lib/api";
+import { useApi, type Deployment, type Edge, type Incident, type OpRow, type Point } from "@/lib/api";
 import { fmtMs, fmtPct, timeAgo } from "@/lib/format";
-import { ServiceCharts } from "@/components/Charts";
+import { LineChart, type Line } from "@/components/charts";
 import { Card, ErrorNote, Loading, PageHeader, SeverityBadge, StatusLabel, WindowSelect } from "@/components/ui";
 
 export default function ServicePage() {
@@ -15,6 +15,11 @@ export default function ServicePage() {
   const series = useApi<Point[]>(`/api/v1/services/${encodeURIComponent(name)}/timeseries?window=${win}`, 10000);
   const edges = useApi<Edge[]>(`/api/v1/dependencies?window=${win}`, 15000);
   const incidents = useApi<Incident[]>("/api/v1/incidents", 15000);
+  const ops = useApi<OpRow[]>(`/api/v1/services/${encodeURIComponent(name)}/operations?window=${win}`, 15000);
+  const deploys = useApi<Deployment[]>("/api/v1/deployments", 30000);
+  const pts = series.data ?? [];
+  const markers = (deploys.data ?? []).filter((d) => d.service === name).map((d) => ({ t: +new Date(d.at), label: d.version }));
+  const mk = (f: (p: Point) => number, color?: string): Line[] => [{ name: "", color, points: pts.map((p) => ({ t: +new Date(p.t), v: f(p) })) }];
 
   const up = (edges.data ?? []).filter((e) => e.target === name);
   const down = (edges.data ?? []).filter((e) => e.source === name);
@@ -25,12 +30,26 @@ export default function ServicePage() {
       <Link href="/dashboard/services" className="text-sm text-muted hover:text-fg">← Services</Link>
       <div className="mt-3"><PageHeader title={name}><WindowSelect value={win} onChange={setWin} /></PageHeader></div>
       <Card className="mt-6 p-5">
-        {series.error ? <ErrorNote message={series.error} /> : series.loading && !series.data ? <Loading /> : <ServiceCharts points={series.data ?? []} />}
+        {series.error ? <ErrorNote message={series.error} /> : series.loading && !series.data ? <Loading /> : <div className="grid gap-5 sm:grid-cols-3">
+          <div><p className="mb-1 text-xs text-muted">Requests</p><LineChart lines={mk((p) => p.count)} height={130} area markers={markers} format={(v) => String(Math.round(v))} /></div>
+          <div><p className="mb-1 text-xs text-muted">Error rate</p><LineChart lines={mk((p) => (p.count ? p.errors / p.count : 0), "var(--danger)")} height={130} area markers={markers} format={(v) => `${(v * 100).toFixed(1)}%`} /></div>
+          <div><p className="mb-1 text-xs text-muted">p95 latency</p><LineChart lines={mk((p) => p.p95Ms, "var(--warn)")} height={130} area markers={markers} format={fmtMs} /></div>
+        </div>}
       </Card>
       <div className="mt-6 grid gap-6 md:grid-cols-2">
         <EdgeList title="Called by" edges={up} pick="source" />
         <EdgeList title="Depends on" edges={down} pick="target" />
       </div>
+      <h2 className="mt-8 text-sm font-medium text-muted">Operations</h2>
+      <Card className="mt-3 overflow-x-auto">
+        {ops.loading && !ops.data ? <Loading /> : !ops.data?.length ? <p className="p-4 text-sm text-muted">No entry operations in this window.</p> : (
+          <table className="w-full min-w-[560px] text-sm">
+            <thead className="border-b border-line text-left text-xs text-muted"><tr>{["Operation", "Calls", "Error rate", "p50", "p95", "p99"].map((h) => <th key={h} className="px-4 py-2.5 font-medium">{h}</th>)}</tr></thead>
+            <tbody className="divide-y divide-line">{ops.data.map((o) => (
+              <tr key={o.name}><td className="px-4 py-2.5 font-mono text-xs">{o.name}</td><td className="px-4 py-2.5">{o.calls}</td>
+                <td className={`px-4 py-2.5 ${o.errorRate >= 0.05 ? "text-danger" : ""}`}>{fmtPct(o.errorRate)}</td><td className="px-4 py-2.5">{fmtMs(o.p50Ms)}</td><td className="px-4 py-2.5">{fmtMs(o.p95Ms)}</td><td className="px-4 py-2.5">{fmtMs(o.p99Ms)}</td></tr>))}</tbody>
+          </table>)}
+      </Card>
       <h2 className="mt-8 text-sm font-medium text-muted">Recent incidents</h2>
       <Card className="mt-3 divide-y divide-line">
         {related.length === 0 ? <p className="p-4 text-sm text-muted">None.</p> : related.map((i) => (

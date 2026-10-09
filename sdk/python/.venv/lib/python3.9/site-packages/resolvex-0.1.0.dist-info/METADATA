@@ -1,0 +1,31 @@
+Metadata-Version: 2.4
+Name: resolvex
+Version: 0.1.0
+Summary: Resolve-X SDK for Python: one-line OpenTelemetry setup for traces, metrics and logs.
+License: Apache-2.0
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: opentelemetry-sdk>=1.27
+Requires-Dist: opentelemetry-exporter-otlp-proto-http>=1.27
+Requires-Dist: opentelemetry-instrumentation>=0.48b0
+Provides-Extra: web
+Requires-Dist: opentelemetry-instrumentation-flask; extra == "web"
+Requires-Dist: opentelemetry-instrumentation-fastapi; extra == "web"
+Requires-Dist: opentelemetry-instrumentation-requests; extra == "web"
+Requires-Dist: opentelemetry-instrumentation-urllib3; extra == "web"
+Provides-Extra: db
+Requires-Dist: opentelemetry-instrumentation-sqlalchemy; extra == "db"
+Requires-Dist: opentelemetry-instrumentation-psycopg2; extra == "db"
+Requires-Dist: opentelemetry-instrumentation-redis; extra == "db"
+Provides-Extra: host
+Requires-Dist: opentelemetry-instrumentation-system-metrics; extra == "host"
+Provides-Extra: logging
+Requires-Dist: opentelemetry-instrumentation-logging; extra == "logging"
+
+# resolvex (Python)
+
+```python
+import resolvex
+resolvex.init(api_key="rx_...", service_name="checkout", version="1.4.2")
+```
+See `/sdk/README.md` in the repository.

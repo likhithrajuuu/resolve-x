@@ -30,7 +30,7 @@ export default function IncidentPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-      <Link href="/dashboard" className="text-sm text-muted hover:text-fg">← Incidents</Link>
+      <Link href="/dashboard/incidents" className="text-sm text-muted hover:text-fg">← Incidents</Link>
       <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-3"><SeverityBadge s={inc.severity} /><StatusLabel s={inc.status} /></div>
