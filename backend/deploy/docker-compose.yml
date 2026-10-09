@@ -56,6 +56,7 @@ services:
     build: { context: .., args: { SERVICE: ingestion } }
     ports: ["4317:4317", "4318:4318", "9101:9100"]
     environment: &env
+      JWT_SECRET: dev-only-secret-change-me-0123456789abcdef
       KAFKA_BROKERS: kafka:19092
       POSTGRES_URL: postgres://resolvex:resolvex@postgres:5432/resolvex
       REDIS_ADDR: redis:6379
@@ -80,11 +81,54 @@ services:
     ports: ["9103:9100"]
     environment:
       <<: *env
-      GATEWAY_DEV_TOKEN: dev-token
+      DEV_SEED_USER: "dev@resolve-x.local:devpassword1"   # local development only
+
+  query:
+    <<: *go
+    build: { context: .., args: { SERVICE: query } }
+    expose: ["8081"]
+    depends_on:
+      clickhouse: { condition: service_healthy }
+    environment:
+      <<: *env
+      CLICKHOUSE_ADDR: clickhouse:9000
+      CLICKHOUSE_USER: resolvex
+      CLICKHOUSE_PASSWORD: resolvex
+
+  incident:
+    <<: *go
+    build: { context: .., args: { SERVICE: incident } }
+    expose: ["8082"]
+    depends_on:
+      kafka: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+    environment:
+      <<: *env
+      CLICKHOUSE_ADDR: clickhouse:9000
+      CLICKHOUSE_USER: resolvex
+      CLICKHOUSE_PASSWORD: resolvex
+
+  analysis:
+    <<: *go
+    build: { context: .., args: { SERVICE: analysis } }
+    depends_on:
+      kafka: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+    environment:
+      <<: *env
+      CLICKHOUSE_ADDR: clickhouse:9000
+      CLICKHOUSE_USER: resolvex
+      CLICKHOUSE_PASSWORD: resolvex
+      # Set ANTHROPIC_API_KEY in your shell to enable LLM analysis. Correlated
+      # evidence is then sent to the Anthropic API; unset = heuristic only.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
   kong:
     image: kong:3.9             # open-source Kong Gateway, DB-less
-    depends_on: [tenancy]
+    depends_on: [tenancy, query, incident]
     ports:
       - "8000:8000"             # proxy (the public API)
       - "127.0.0.1:8001:8001"   # admin API, localhost only

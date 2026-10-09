@@ -5,7 +5,6 @@ package tenancy
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"log/slog"
@@ -19,48 +18,24 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/resolvex/resolve-x/backend/internal/auth"
+	"github.com/resolvex/resolve-x/backend/internal/authn"
 )
 
-type ctxKey int
-
-const identityKey ctxKey = 0
-
-// Identity is the authenticated caller. TenantID always comes from here,
-// never from a request parameter (api-gateway.md, Security).
-type Identity struct{ TenantID, Actor string }
-
-// Authenticator turns a request into an Identity. Kong forwards the caller's
-// credentials unchanged; the real implementation (OIDC / session JWT) plugs in
-// here once an identity provider is chosen. DevAuthenticator is local-only.
-type Authenticator interface {
-	Authenticate(r *http.Request) (Identity, bool)
-}
-
-// DevAuthenticator accepts one static bearer token and maps it to one tenant.
-// It must never be enabled outside local development.
-type DevAuthenticator struct{ Token, TenantID string }
-
-func (d DevAuthenticator) Authenticate(r *http.Request) (Identity, bool) {
-	tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if d.Token == "" || subtle.ConstantTimeCompare([]byte(tok), []byte(d.Token)) != 1 {
-		return Identity{}, false
-	}
-	return Identity{TenantID: d.TenantID, Actor: "dev-user"}, true
-}
-
 type Service struct {
-	DB    *pgxpool.Pool
-	Redis *redis.Client
-	Auth  Authenticator
-	Log   *slog.Logger
+	DB     *pgxpool.Pool
+	Redis  *redis.Client
+	Secret []byte
+	Log    *slog.Logger
 }
 
 func (g *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
+	g.mountAuth(mux)
 	mux.HandleFunc("GET /api/v1/projects", g.secure(g.listProjects))
 	mux.HandleFunc("POST /api/v1/projects", g.secure(g.createProject))
 	mux.HandleFunc("GET /api/v1/projects/{projectId}/environments", g.secure(g.listEnvironments))
 	mux.HandleFunc("POST /api/v1/projects/{projectId}/environments", g.secure(g.createEnvironment))
+	mux.HandleFunc("GET /api/v1/projects/{projectId}/api-keys", g.secure(g.listAPIKeys))
 	mux.HandleFunc("POST /api/v1/projects/{projectId}/api-keys", g.secure(g.createAPIKey))
 	mux.HandleFunc("DELETE /api/v1/projects/{projectId}/api-keys/{keyId}", g.secure(g.revokeAPIKey))
 
@@ -69,14 +44,18 @@ func (g *Service) Handler() http.Handler {
 
 func (g *Service) secure(h func(http.ResponseWriter, *http.Request, Identity)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := g.Auth.Authenticate(r)
-		if !ok {
+		c, err := authn.Verify(g.Secret, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		if err != nil {
 			writeErr(w, http.StatusUnauthorized, "unauthenticated", "missing or invalid credentials")
 			return
 		}
-		h(w, r, id)
+		h(w, r, Identity{TenantID: c.Tenant, Actor: c.Email})
 	}
 }
+
+// Identity is the authenticated caller. TenantID always comes from the verified
+// token, never from a request parameter (api-gateway.md, Security).
+type Identity struct{ TenantID, Actor string }
 
 func requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -254,4 +233,30 @@ func (g *Service) revokeAPIKey(w http.ResponseWriter, r *http.Request, id Identi
 	}
 	g.audit(r.Context(), id, "apikey.revoke", r.PathValue("keyId"))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (g *Service) listAPIKeys(w http.ResponseWriter, r *http.Request, id Identity) {
+	rows, err := g.DB.Query(r.Context(), `
+		SELECT id, environment_id, key_prefix, status, created_at FROM api_keys
+		WHERE project_id=$1 AND tenant_id=$2 ORDER BY created_at DESC`, r.PathValue("projectId"), id.TenantID)
+	if err != nil {
+		writeErr(w, 500, "internal", "query failed")
+		return
+	}
+	defer rows.Close()
+	type key struct {
+		ID            string    `json:"id"`
+		EnvironmentID string    `json:"environmentId"`
+		Prefix        string    `json:"prefix"`
+		Status        string    `json:"status"`
+		CreatedAt     time.Time `json:"createdAt"`
+	}
+	out := []key{}
+	for rows.Next() {
+		var k key
+		if rows.Scan(&k.ID, &k.EnvironmentID, &k.Prefix, &k.Status, &k.CreatedAt) == nil {
+			out = append(out, k)
+		}
+	}
+	writeJSON(w, 200, out)
 }

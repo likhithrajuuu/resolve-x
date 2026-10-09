@@ -10,6 +10,17 @@ The goal is simple:
 
 ---
 
+## Quick start
+
+```bash
+cd backend && make up && make seed      # backend stack + sample traffic
+cd ../web && npm install && npm run dev  # dashboard at http://localhost:3000
+```
+
+Sign in with `dev@resolve-x.local` / `devpassword1` (local dev only), or create an account. `make incident-demo` injects a fault so you can watch an incident get detected and analysed. See [backend/README.md](backend/README.md).
+
+---
+
 ## Problem
 
 Modern applications are increasingly distributed across multiple services, databases, message brokers, caches and external APIs.

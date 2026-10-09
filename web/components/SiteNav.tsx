@@ -26,12 +26,12 @@ export function SiteNav() {
           ))}
         </ul>
         <div className="flex items-center gap-2">
-          <Link href="/dashboard" className="hidden px-3 py-1.5 text-sm text-muted transition-colors hover:text-fg sm:block">
-            Live demo
+          <Link href="/login" className="px-3 py-1.5 text-sm text-muted transition-colors hover:text-fg">
+            Sign in
           </Link>
-          <a href="#cta" className="rounded-md bg-fg px-3.5 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90">
-            Get early access
-          </a>
+          <Link href="/signup" className="rounded-md bg-fg px-3.5 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90">
+            Start free
+          </Link>
         </div>
       </nav>
     </header>

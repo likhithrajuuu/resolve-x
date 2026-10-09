@@ -26,10 +26,11 @@ const scale = [
   ["Backpressure, not data loss", "If the pipeline is saturated, collectors get a retryable error instead of silently dropped data."],
 ] as const;
 
-const tiers = [
-  { name: "Starter", price: "Free", note: "For trying it on one project", items: ["1 project", "Up to 5 services", "3-day retention", "Community support"], cta: "Start free" },
-  { name: "Team", price: "Contact us", note: "For teams running production", items: ["Unlimited projects", "30-day retention", "AI root-cause analysis", "Slack and webhook alerts", "SSO"], cta: "Talk to us", featured: true },
-  { name: "Enterprise", price: "Custom", note: "For high-volume platforms", items: ["Dedicated capacity", "Custom retention", "Private networking", "Audit log export", "Priority support"], cta: "Talk to us" },
+type Tier = { name: string; price: string; note: string; items: string[]; cta: string; href: string; featured?: boolean };
+const tiers: Tier[] = [
+  { name: "Starter", price: "Free", note: "For trying it on one project", items: ["1 project", "Up to 5 services", "3-day retention", "Community support"], cta: "Start free", href: "/signup" },
+  { name: "Team", price: "Contact us", note: "For teams running production", items: ["Unlimited projects", "30-day retention", "AI root-cause analysis", "Slack and webhook alerts", "SSO"], cta: "Talk to us", href: "mailto:sales@resolve-x.dev", featured: true },
+  { name: "Enterprise", price: "Custom", note: "For high-volume platforms", items: ["Dedicated capacity", "Custom retention", "Private networking", "Audit log export", "Priority support"], cta: "Talk to us", href: "mailto:sales@resolve-x.dev" },
 ] as const;
 
 const faqs = [
@@ -49,7 +50,7 @@ export default function Home() {
           <div className="relative mx-auto max-w-6xl px-4 pb-20 pt-20 sm:px-6 sm:pt-28">
             <div className="mx-auto max-w-3xl text-center">
               <p className="mx-auto inline-block rounded-full border border-line bg-surface/70 px-3 py-1 text-xs text-muted">
-                Early access · Built on OpenTelemetry
+                Built on OpenTelemetry
               </p>
               <h1 className="mt-6 text-balance text-4xl font-semibold tracking-tight sm:text-6xl">
                 When production breaks, know <span className="text-accent">why</span> in minutes.
@@ -59,12 +60,12 @@ export default function Home() {
                 team the probable root cause and what to do next.
               </p>
               <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-                <a href="#cta" className="w-full rounded-md bg-accent px-5 py-2.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 sm:w-auto">
-                  Get early access
-                </a>
-                <Link href="/dashboard" className="w-full rounded-md border border-line px-5 py-2.5 text-sm transition-colors hover:bg-surface sm:w-auto">
-                  See the live demo
+                <Link href="/signup" className="w-full rounded-md bg-accent px-5 py-2.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 sm:w-auto">
+                  Start free
                 </Link>
+                <a href="#how" className="w-full rounded-md border border-line px-5 py-2.5 text-sm transition-colors hover:bg-surface sm:w-auto">
+                  See how it works
+                </a>
               </div>
             </div>
             <div className="mx-auto mt-14 max-w-4xl">
@@ -130,7 +131,7 @@ export default function Home() {
         <section id="pricing" className="scroll-mt-16 border-t border-line bg-surface/50">
           <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
             <h2 className="text-3xl font-semibold tracking-tight">Pricing</h2>
-            <p className="mt-4 max-w-2xl text-muted">Early-access plans. Final pricing will be announced before general availability.</p>
+            <p className="mt-4 max-w-2xl text-muted">Draft plans. Pricing is not final until general availability.</p>
             <div className="mt-10 grid gap-4 lg:grid-cols-3">
               {tiers.map((t) => (
                 <div key={t.name} className={`flex flex-col rounded-xl border p-6 ${"featured" in t ? "border-accent bg-surface" : "border-line bg-surface"}`}>
@@ -145,7 +146,7 @@ export default function Home() {
                       </li>
                     ))}
                   </ul>
-                  <a href="#cta" className={`mt-8 rounded-md px-4 py-2 text-center text-sm font-medium ${"featured" in t ? "bg-accent text-bg" : "border border-line hover:bg-surface-2"}`}>
+                  <a href={t.href} className={`mt-8 rounded-md px-4 py-2 text-center text-sm font-medium ${"featured" in t ? "bg-accent text-bg" : "border border-line hover:bg-surface-2"}`}>
                     {t.cta}
                   </a>
                 </div>
@@ -171,13 +172,9 @@ export default function Home() {
 
         <section id="cta" className="glow scroll-mt-16 border-t border-line">
           <div className="mx-auto max-w-2xl px-4 py-24 text-center sm:px-6">
-            <h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Get early access</h2>
-            <p className="mt-3 text-muted">Tell us where to reach you. We&apos;ll invite teams in batches.</p>
-            <form action="mailto:hello@resolve-x.dev" method="post" encType="text/plain" className="mx-auto mt-8 flex max-w-md flex-col gap-2 sm:flex-row">
-              <label htmlFor="email" className="sr-only">Work email</label>
-              <input id="email" name="email" type="email" required placeholder="you@company.com" className="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent" />
-              <button className="rounded-md bg-accent px-5 py-2.5 text-sm font-medium text-bg hover:opacity-90">Request access</button>
-            </form>
+            <h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Find your next root cause faster</h2>
+            <p className="mt-3 text-muted">Create an account, get an API key, and send your first traces in a few minutes.</p>
+            <Link href="/signup" className="mt-8 inline-block rounded-md bg-accent px-6 py-3 text-sm font-medium text-bg hover:opacity-90">Create your account</Link>
           </div>
         </section>
       </main>

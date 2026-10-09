@@ -35,3 +35,6 @@ backend/bin/
 web/node_modules/
 web/.next/
 .DS_Store
+
+.env
+web/.next-dev/

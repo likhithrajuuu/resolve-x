@@ -4,6 +4,7 @@ package main
 import (
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,14 +29,20 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: config.String("REDIS_ADDR", "localhost:6379")})
 	defer rdb.Close()
 
-	devToken := os.Getenv("GATEWAY_DEV_TOKEN")
-	if devToken == "" {
-		log.Error("no authenticator configured: set GATEWAY_DEV_TOKEN for local development (OIDC is not implemented yet)")
+	secret := os.Getenv("JWT_SECRET")
+	if len(secret) < 32 {
+		log.Error("JWT_SECRET must be set to at least 32 characters")
 		os.Exit(1)
 	}
-	svc := &tenancy.Service{
-		DB: db, Redis: rdb, Log: log,
-		Auth: tenancy.DevAuthenticator{Token: devToken, TenantID: config.String("GATEWAY_DEV_TENANT", "tnt_dev")},
+	svc := &tenancy.Service{DB: db, Redis: rdb, Log: log, Secret: []byte(secret)}
+	if v := os.Getenv("DEV_SEED_USER"); v != "" { // "email:password", local development only
+		if email, pw, ok := strings.Cut(v, ":"); ok {
+			if err := svc.SeedDevUser(ctx, email, pw); err != nil {
+				log.Error("seed dev user", "err", err)
+				os.Exit(1)
+			}
+			log.Warn("development login seeded; never set DEV_SEED_USER in production", "email", email)
+		}
 	}
 
 	health := &platform.Health{}

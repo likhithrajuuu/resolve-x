@@ -142,3 +142,6 @@ func (c *CH) InsertMetrics(ctx context.Context, rows []Metric) error {
 	}
 	return b.Send()
 }
+
+// Conn exposes the connection for read paths (query API, incident detector).
+func (c *CH) Conn() driver.Conn { return c.conn }

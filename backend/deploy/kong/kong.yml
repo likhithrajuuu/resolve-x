@@ -15,13 +15,31 @@ services:
       - name: tenancy-projects
         paths: ["/api/v1/projects"]
         strip_path: false
+      - name: tenancy-auth
+        paths: ["/api/v1/auth"]
+        strip_path: false
+        plugins:
+          # Credential endpoints get a much tighter limit (brute-force protection).
+          - name: rate-limiting
+            config: { minute: 20, policy: local, fault_tolerant: true }
 
-  # Add routes here as services are built, one Kong service each, e.g.
-  #   incident-service  -> /api/v1/incidents
-  #   service-registry  -> /api/v1/services, /api/v1/dependencies
-  #   analysis-service  -> /api/v1/analyses
-  # OTLP is intentionally NOT routed through Kong: ingestion has very different
-  # load characteristics and is exposed directly (api-gateway.md, Does Not Own).
+  - name: query
+    url: http://query:8081
+    read_timeout: 30000
+    routes:
+      - name: query-telemetry
+        paths: ["/api/v1/services", "/api/v1/dependencies", "/api/v1/traces", "/api/v1/logs", "/api/v1/metrics"]
+        strip_path: false
+
+  - name: incident
+    url: http://incident:8082
+    routes:
+      - name: incident-api
+        paths: ["/api/v1/incidents", "/api/v1/analyses", "/api/v1/deployments", "/api/v1/webhooks"]
+        strip_path: false
+
+# OTLP is intentionally NOT routed through Kong: ingestion has very different
+# load characteristics and is exposed directly (api-gateway.md, Does Not Own).
 
 plugins:
   - name: correlation-id
