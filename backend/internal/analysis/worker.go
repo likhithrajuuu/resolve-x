@@ -6,17 +6,21 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"time"
 
+	"github.com/resolvex/resolve-x/backend/internal/aiconfig"
 	"github.com/resolvex/resolve-x/backend/internal/events"
+	"github.com/resolvex/resolve-x/backend/internal/llm"
 )
 
 type Worker struct {
-	G   *Gatherer
-	Pub *events.Producer
-	LLM *LLM // optional
-	Log *slog.Logger
-	Now func() time.Time
+	G      *Gatherer
+	Pub    *events.Producer
+	AI     *aiconfig.Store // optional: per-organization LLM settings
+	Client *http.Client    // SSRF-safe client for provider calls
+	Log    *slog.Logger
+	Now    func() time.Time
 }
 
 type incidentPayload struct {
@@ -49,15 +53,8 @@ func (w *Worker) Handle(ctx context.Context, env events.Envelope) error {
 	default:
 		evidence = bundle.Evidence
 		res = Heuristic(bundle)
-		if w.LLM != nil {
-			llmCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-			refined, err := w.LLM.Analyze(llmCtx, in.Title, bundle, res)
-			cancel()
-			if err != nil {
-				w.Log.Warn("llm analysis failed; using heuristic result", "err", err)
-			} else {
-				res = refined
-			}
+		if w.AI != nil {
+			res = w.refine(ctx, env.TenantID, in.Title, bundle, res)
 		}
 	}
 	if evidence == nil {
@@ -74,4 +71,29 @@ func (w *Worker) Handle(ctx context.Context, env events.Envelope) error {
 	}
 	out.EventID = "ana_" + env.EventID
 	return w.Pub.Publish(ctx, events.TopicAnalysisCompleted, events.Key(env.TenantID, in.IncidentID), out)
+}
+
+// refine upgrades the heuristic result with the tenant's configured model.
+// Any failure leaves the heuristic result in place: analysis never blocks on an LLM.
+func (w *Worker) refine(ctx context.Context, tenant, title string, b *Bundle, prelim Result) Result {
+	cfg, _, err := w.AI.Resolve(ctx, tenant)
+	if err != nil {
+		if !errors.Is(err, llm.ErrNotConfigured) {
+			w.Log.Warn("ai settings unavailable; using heuristic result", "err", err)
+		}
+		return prelim
+	}
+	p, err := llm.New(cfg, w.Client)
+	if err != nil {
+		w.Log.Warn("ai provider invalid; using heuristic result", "err", err)
+		return prelim
+	}
+	llmCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	refined, err := Refine(llmCtx, p, cfg.Provider+":"+cfg.Model, title, b, prelim)
+	if err != nil {
+		w.Log.Warn("llm analysis failed; using heuristic result", "err", err)
+		return prelim
+	}
+	return refined
 }

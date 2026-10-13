@@ -16,8 +16,10 @@ jobs:
       - run: go test -race ./...
       - name: Validate Kong config
         run: docker run --rm -v "$PWD/deploy/kong/kong.yml:/kong.yml:ro" -e KONG_DATABASE=off kong:3.9 kong config parse /kong.yml
+      - name: Kubernetes manifests are valid YAML
+        run: python3 -c "import yaml,sys;[list(yaml.safe_load_all(open(f))) for f in ('deploy/k8s/platform.yaml','deploy/k8s/ingestion.yaml')]"
       - name: Build service images
-        run: for s in ingestion processor tenancy query incident analysis; do docker build --build-arg SERVICE=$s -t resolvex-$s .; done
+        run: for s in ingestion processor tenancy query incident analysis assistant; do docker build --build-arg SERVICE=$s -t resolvex-$s .; done
 
   web:
     runs-on: ubuntu-latest
@@ -29,3 +31,24 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+      - run: docker build -t resolvex-web .
+
+  sdk-node:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: sdk/node } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: sdk/node/package-lock.json }
+      - run: npm ci
+      - run: npm test
+
+  sdk-python:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: sdk/python } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -e . pytest
+      - run: pytest -q

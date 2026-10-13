@@ -33,7 +33,11 @@ export function ErrorNote({ message }: { message: string }) {
 }
 
 export function Loading() {
-  return <div className="px-4 py-10 text-center text-sm text-muted">Loading…</div>;
+  return (
+    <div className="space-y-3 px-4 py-6" role="status" aria-label="Loading">
+      {[72, 100, 88].map((w) => <div key={w} className="h-3 animate-pulse rounded bg-surface-2" style={{ width: `${w}%` }} />)}
+    </div>
+  );
 }
 
 export function WindowSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {

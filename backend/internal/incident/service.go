@@ -19,8 +19,15 @@ import (
 )
 
 type Service struct {
-	DB  *pgxpool.Pool
-	Log *slog.Logger
+	DB       *pgxpool.Pool
+	Log      *slog.Logger
+	Notifier *Notifier // optional
+}
+
+func (s *Service) announce(tenant string, e Event) {
+	if s.Notifier != nil {
+		s.Notifier.Notify(tenant, e)
+	}
 }
 
 type Incident struct {
@@ -128,7 +135,11 @@ func (s *Service) Create(ctx context.Context, tenant string, in NewIncident) (In
 		createdPayload{inc.ID, inc.Title, inc.Service, inc.Severity, inc.CreatedAt}); err != nil {
 		return Incident{}, false, err
 	}
-	return inc, true, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return Incident{}, false, err
+	}
+	s.announce(tenant, Event{Type: "incident.created", Incident: inc})
+	return inc, true, nil
 }
 
 func (s *Service) List(ctx context.Context, tenant, status string) ([]Incident, error) {
@@ -236,7 +247,15 @@ func (s *Service) SetStatus(ctx context.Context, tenant, id, status, actor strin
 	if err := timeline(ctx, tx, id, tenant, "status", fmt.Sprintf("%s set status to %s", actor, status)); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if status == "resolved" {
+		if inc, err := scanIncident(s.DB.QueryRow(ctx, `SELECT `+incidentCols+` FROM incidents WHERE id=$1 AND tenant_id=$2`, id, tenant)); err == nil {
+			s.announce(tenant, Event{Type: "incident.resolved", Incident: inc})
+		}
+	}
+	return nil
 }
 
 // RequestAnalysis queues a (re-)analysis of an incident.
@@ -327,7 +346,17 @@ func (s *Service) HandleAnalysisCompleted(ctx context.Context, env events.Envelo
 	if err := timeline(ctx, tx, p.IncidentID, env.TenantID, "analysis", fmt.Sprintf("Probable root cause (%d%%): %s", p.Confidence, p.RootCause)); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if inc, err := scanIncident(s.DB.QueryRow(ctx, `SELECT `+incidentCols+` FROM incidents WHERE id=$1 AND tenant_id=$2`, p.IncidentID, env.TenantID)); err == nil {
+		var r struct {
+			Description string `json:"description"`
+		}
+		_ = json.Unmarshal(p.Recommendation, &r)
+		s.announce(env.TenantID, Event{Type: "analysis.completed", Incident: inc, RootCause: p.RootCause, Confidence: p.Confidence, Recommended: r.Description})
+	}
+	return nil
 }
 
 // RelayOutbox publishes pending outbox rows to Kafka until ctx ends.

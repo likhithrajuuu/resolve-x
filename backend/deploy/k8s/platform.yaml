@@ -1,0 +1,324 @@
+# Resolve-X application services for Kubernetes.
+#
+# Prerequisites (not included): Kafka, PostgreSQL, Redis and ClickHouse, reachable
+# from the cluster. Create two objects before applying this file:
+#
+#   kubectl create namespace resolvex
+#   kubectl -n resolvex create configmap resolvex-config \
+#       --from-literal=KAFKA_BROKERS=kafka:9092 --from-literal=REDIS_ADDR=redis:6379 \
+#       --from-literal=CLICKHOUSE_ADDR=clickhouse:9000 --from-literal=PUBLIC_URL=https://app.example.com
+#   kubectl -n resolvex create secret generic resolvex-secrets \
+#       --from-literal=JWT_SECRET="$(openssl rand -hex 32)" --from-literal=SECRETS_KEY="$(openssl rand -hex 32)" \
+#       --from-literal=POSTGRES_URL=postgres://... \
+#       --from-literal=CLICKHOUSE_RW_USER=... --from-literal=CLICKHOUSE_RW_PASSWORD=... \
+#       --from-literal=CLICKHOUSE_RO_USER=... --from-literal=CLICKHOUSE_RO_PASSWORD=...
+#   kubectl -n resolvex create configmap kong-config --from-file=kong.yml=../kong/kong.yml
+#
+# This manifest has been written to follow Kubernetes conventions but has NOT been
+# applied to a cluster by the authors. Run `kubectl apply --dry-run=server` first.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: tenancy, namespace: resolvex, labels: { app: tenancy } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: tenancy } }
+  template:
+    metadata: { labels: { app: tenancy } }
+    spec:
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: tenancy } } }
+      containers:
+        - name: tenancy
+          image: ghcr.io/resolve-x/tenancy:latest
+          ports: [{ containerPort: 8080, name: http }, { containerPort: 9100, name: ops }]
+          envFrom: [{ configMapRef: { name: resolvex-config } }, { secretRef: { name: resolvex-secrets } }]
+
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          resources: { requests: { cpu: 250m, memory: 128Mi }, limits: { memory: 512Mi } }
+          readinessProbe: { httpGet: { path: /readyz, port: ops }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: ops }, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: tenancy, namespace: resolvex }
+spec:
+  selector: { app: tenancy }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: tenancy, namespace: resolvex }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: tenancy } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: query, namespace: resolvex, labels: { app: query } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: query } }
+  template:
+    metadata: { labels: { app: query } }
+    spec:
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: query } } }
+      containers:
+        - name: query
+          image: ghcr.io/resolve-x/query:latest
+          ports: [{ containerPort: 8081, name: http }, { containerPort: 9100, name: ops }]
+          envFrom: [{ configMapRef: { name: resolvex-config } }, { secretRef: { name: resolvex-secrets } }]
+          env:
+            - { name: CLICKHOUSE_USER, valueFrom: { secretKeyRef: { name: resolvex-secrets, key: CLICKHOUSE_RO_USER } } }
+            - { name: CLICKHOUSE_PASSWORD, valueFrom: { secretKeyRef: { name: resolvex-secrets, key: CLICKHOUSE_RO_PASSWORD } } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          resources: { requests: { cpu: 250m, memory: 128Mi }, limits: { memory: 512Mi } }
+          readinessProbe: { httpGet: { path: /readyz, port: ops }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: ops }, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: query, namespace: resolvex }
+spec:
+  selector: { app: query }
+  ports: [{ name: http, port: 8081, targetPort: http }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: query, namespace: resolvex }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: query } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: incident, namespace: resolvex, labels: { app: incident } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: incident } }
+  template:
+    metadata: { labels: { app: incident } }
+    spec:
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: incident } } }
+      containers:
+        - name: incident
+          image: ghcr.io/resolve-x/incident:latest
+          ports: [{ containerPort: 8082, name: http }, { containerPort: 9100, name: ops }]
+          envFrom: [{ configMapRef: { name: resolvex-config } }, { secretRef: { name: resolvex-secrets } }]
+          env:
+            - { name: CLICKHOUSE_USER, valueFrom: { secretKeyRef: { name: resolvex-secrets, key: CLICKHOUSE_RO_USER } } }
+            - { name: CLICKHOUSE_PASSWORD, valueFrom: { secretKeyRef: { name: resolvex-secrets, key: CLICKHOUSE_RO_PASSWORD } } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          resources: { requests: { cpu: 250m, memory: 128Mi }, limits: { memory: 512Mi } }
+          readinessProbe: { httpGet: { path: /readyz, port: ops }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: ops }, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: incident, namespace: resolvex }
+spec:
+  selector: { app: incident }
+  ports: [{ name: http, port: 8082, targetPort: http }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: incident, namespace: resolvex }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: incident } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: assistant, namespace: resolvex, labels: { app: assistant } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: assistant } }
+  template:
+    metadata: { labels: { app: assistant } }
+    spec:
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: assistant } } }
+      containers:
+        - name: assistant
+          image: ghcr.io/resolve-x/assistant:latest
+          ports: [{ containerPort: 8083, name: http }, { containerPort: 9100, name: ops }]
+          envFrom: [{ configMapRef: { name: resolvex-config } }, { secretRef: { name: resolvex-secrets } }]
+          env:
+            - { name: QUERY_URL, value: "http://query:8081" }
+            - { name: INCIDENT_URL, value: "http://incident:8082" }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          resources: { requests: { cpu: 250m, memory: 128Mi }, limits: { memory: 512Mi } }
+          readinessProbe: { httpGet: { path: /readyz, port: ops }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: ops }, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: assistant, namespace: resolvex }
+spec:
+  selector: { app: assistant }
+  ports: [{ name: http, port: 8083, targetPort: http }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: assistant, namespace: resolvex }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: assistant } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: analysis, namespace: resolvex, labels: { app: analysis } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: analysis } }
+  template:
+    metadata: { labels: { app: analysis } }
+    spec:
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: analysis } } }
+      containers:
+        - name: analysis
+          image: ghcr.io/resolve-x/analysis:latest
+          ports: [{ containerPort: 9100, name: ops }]
+          envFrom: [{ configMapRef: { name: resolvex-config } }, { secretRef: { name: resolvex-secrets } }]
+          env:
+            - { name: CLICKHOUSE_USER, valueFrom: { secretKeyRef: { name: resolvex-secrets, key: CLICKHOUSE_RO_USER } } }
+            - { name: CLICKHOUSE_PASSWORD, valueFrom: { secretKeyRef: { name: resolvex-secrets, key: CLICKHOUSE_RO_PASSWORD } } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          resources: { requests: { cpu: 250m, memory: 128Mi }, limits: { memory: 512Mi } }
+          readinessProbe: { httpGet: { path: /readyz, port: ops }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: ops }, periodSeconds: 10 }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: analysis, namespace: resolvex }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: analysis } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: processor, namespace: resolvex, labels: { app: processor } }
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: processor } }
+  template:
+    metadata: { labels: { app: processor } }
+    spec:
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: processor } } }
+      containers:
+        - name: processor
+          image: ghcr.io/resolve-x/processor:latest
+          ports: [{ containerPort: 9100, name: ops }]
+          envFrom: [{ configMapRef: { name: resolvex-config } }, { secretRef: { name: resolvex-secrets } }]
+          env:
+            - { name: CLICKHOUSE_USER, valueFrom: { secretKeyRef: { name: resolvex-secrets, key: CLICKHOUSE_RW_USER } } }
+            - { name: CLICKHOUSE_PASSWORD, valueFrom: { secretKeyRef: { name: resolvex-secrets, key: CLICKHOUSE_RW_PASSWORD } } }
+            - { name: CLICKHOUSE_RO_USER, valueFrom: { secretKeyRef: { name: resolvex-secrets, key: CLICKHOUSE_RO_USER } } }   # processor creates this read-only account
+            - { name: CLICKHOUSE_RO_PASSWORD, valueFrom: { secretKeyRef: { name: resolvex-secrets, key: CLICKHOUSE_RO_PASSWORD } } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          resources: { requests: { cpu: 250m, memory: 128Mi }, limits: { memory: 512Mi } }
+          readinessProbe: { httpGet: { path: /readyz, port: ops }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: ops }, periodSeconds: 10 }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: processor, namespace: resolvex }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: processor } }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: processor, namespace: resolvex }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: processor }
+  minReplicas: 3
+  maxReplicas: 24   # no point exceeding the telemetry.raw partition count
+  metrics: [{ type: Resource, resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } } }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: kong, namespace: resolvex, labels: { app: kong } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: kong } }
+  template:
+    metadata: { labels: { app: kong } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: kong
+          image: kong:3.9
+          ports: [{ containerPort: 8000, name: proxy }, { containerPort: 8100, name: status }]
+          env:
+            - { name: KONG_DATABASE, value: "off" }
+            - { name: KONG_DECLARATIVE_CONFIG, value: /kong/kong.yml }
+            - { name: KONG_PROXY_LISTEN, value: "0.0.0.0:8000" }
+            - { name: KONG_ADMIN_LISTEN, value: "off" }       # no Admin API in the cluster
+            - { name: KONG_STATUS_LISTEN, value: "0.0.0.0:8100" }
+            - { name: KONG_PROXY_ACCESS_LOG, value: /dev/stdout }
+            - { name: KONG_PROXY_ERROR_LOG, value: /dev/stderr }
+          volumeMounts: [{ name: config, mountPath: /kong, readOnly: true }]
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          resources: { requests: { cpu: 250m, memory: 256Mi }, limits: { memory: 512Mi } }
+          readinessProbe: { httpGet: { path: /status, port: status }, periodSeconds: 5 }
+      volumes: [{ name: config, configMap: { name: kong-config } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: kong, namespace: resolvex }
+spec:
+  selector: { app: kong }
+  ports: [{ name: proxy, port: 80, targetPort: proxy }]
+---
+# Expose Kong (the public API) and the dashboard through your ingress controller.
+# TLS is terminated at the ingress.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: resolvex
+  namespace: resolvex
+spec:
+  tls: [{ hosts: [api.example.com, app.example.com], secretName: resolvex-tls }]
+  rules:
+    - host: api.example.com
+      http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: kong, port: { number: 80 } } } }] }
+    - host: app.example.com
+      http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: web, port: { number: 3000 } } } }] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: web, namespace: resolvex, labels: { app: web } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: web } }
+  template:
+    metadata: { labels: { app: web } }
+    spec:
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: web
+          image: ghcr.io/resolve-x/web:latest   # build with NEXT_PUBLIC_API_URL / NEXT_PUBLIC_INGEST_URL (see web/Dockerfile)
+          ports: [{ containerPort: 3000, name: http }]
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: cache, mountPath: /app/.next/cache }]
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { memory: 384Mi } }
+          readinessProbe: { httpGet: { path: /login, port: http }, periodSeconds: 5 }
+      volumes: [{ name: cache, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: web, namespace: resolvex }
+spec:
+  selector: { app: web }
+  ports: [{ name: http, port: 3000, targetPort: http }]

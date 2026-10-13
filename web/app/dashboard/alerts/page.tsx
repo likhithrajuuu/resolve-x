@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { api, useApi, type MetricName, type Rule, type ServiceRow } from "@/lib/api";
+import { api, isAdmin, useMe, useApi, type MetricName, type Rule, type ServiceRow } from "@/lib/api";
 import { fmtMs, timeAgo } from "@/lib/format";
 import { btn, btnGhost, Card, Empty, ErrorNote, input, Loading, PageHeader, SeverityBadge } from "@/components/ui";
 
@@ -16,6 +16,8 @@ const fmtValue = (r: Rule) => (r.lastValue == null ? "–" : r.kind === "error_r
 
 export default function AlertsPage() {
   const { data, error, loading, reload } = useApi<Rule[]>("/api/v1/alert-rules", 10000);
+  const me = useMe();
+  const admin = isAdmin(me.data);
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -26,7 +28,7 @@ export default function AlertsPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-      <PageHeader title="Alert rules"><button className={btn} onClick={() => setCreating((v) => !v)}>{creating ? "Cancel" : "New rule"}</button></PageHeader>
+      <PageHeader title="Alert rules">{admin && <button className={btn} onClick={() => setCreating((v) => !v)}>{creating ? "Cancel" : "New rule"}</button>}</PageHeader>
       <p className="mt-2 text-sm text-muted">A firing rule opens an incident, which Resolve-X then analyses. Rules are evaluated every 30 seconds.</p>
       {creating && <NewRule onDone={() => { setCreating(false); void reload(); }} />}
       {err && <div className="mt-4"><ErrorNote message={err} /></div>}

@@ -17,8 +17,9 @@ import (
 )
 
 type API struct {
-	CH     *store.CH
-	Secret []byte
+	CH      *store.CH
+	Secret  []byte
+	Revoker authn.Revoker
 }
 
 func (a *API) Handler() http.Handler {
@@ -29,13 +30,14 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/traces", a.traces)
 	mux.HandleFunc("GET /api/v1/traces/{traceId}", a.trace)
 	mux.HandleFunc("GET /api/v1/logs", a.logs)
+	mux.HandleFunc("GET /api/v1/usage", a.usage)
 	mux.HandleFunc("GET /api/v1/metrics", a.metricNames)
 	mux.HandleFunc("GET /api/v1/metrics/series", a.metricSeries)
 	mux.HandleFunc("GET /api/v1/metrics/labels", a.metricLabels)
 	mux.HandleFunc("GET /api/v1/services/{name}/operations", a.operations)
 	mux.HandleFunc("GET /api/v1/logs/volume", a.logVolume)
 	mux.HandleFunc("GET /api/v1/logs/patterns", a.logPatterns)
-	return authn.Require(a.Secret, mux)
+	return authn.RequireWith(a.Secret, a.Revoker, mux)
 }
 
 // tenant is ALWAYS taken from the verified token.
@@ -624,4 +626,63 @@ func (a *API) logPatterns(w http.ResponseWriter, r *http.Request) {
 		out = append(out, x)
 	}
 	authn.WriteJSON(w, 200, out)
+}
+
+// usage reports ingested volume per day, for capacity planning and billing.
+func (a *API) usage(w http.ResponseWriter, r *http.Request) {
+	days := limit(r, 30, 31)
+	since := time.Now().AddDate(0, 0, -days)
+	type day struct {
+		Day     string `json:"day"`
+		Spans   uint64 `json:"spans"`
+		Logs    uint64 `json:"logs"`
+		Metrics uint64 `json:"metricPoints"`
+	}
+	byDay := map[string]*day{}
+	get := func(d time.Time) *day {
+		k := d.Format("2006-01-02")
+		if byDay[k] == nil {
+			byDay[k] = &day{Day: k}
+		}
+		return byDay[k]
+	}
+	for _, q := range []struct {
+		table, col string
+		set        func(*day, uint64)
+	}{
+		{"spans", "start_time", func(d *day, n uint64) { d.Spans = n }},
+		{"logs", "ts", func(d *day, n uint64) { d.Logs = n }},
+		{"metrics", "ts", func(d *day, n uint64) { d.Metrics = n }},
+	} {
+		rows, err := a.CH.Conn().Query(r.Context(), "SELECT toDate("+q.col+") AS d, count() FROM "+q.table+" WHERE tenant_id = ? AND "+q.col+" >= ? GROUP BY d", tenant(r), since)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		for rows.Next() {
+			var d time.Time
+			var n uint64
+			if err := rows.Scan(&d, &n); err != nil {
+				rows.Close()
+				fail(w, err)
+				return
+			}
+			q.set(get(d), n)
+		}
+		rows.Close()
+	}
+	out := make([]day, 0, len(byDay))
+	var tot day
+	for i := days; i >= 0; i-- {
+		k := time.Now().AddDate(0, 0, -i).Format("2006-01-02")
+		d := day{Day: k}
+		if v := byDay[k]; v != nil {
+			d = *v
+		}
+		tot.Spans, tot.Logs, tot.Metrics = tot.Spans+d.Spans, tot.Logs+d.Logs, tot.Metrics+d.Metrics
+		out = append(out, d)
+	}
+	var services uint64
+	_ = a.CH.Conn().QueryRow(r.Context(), "SELECT uniqExact(service) FROM spans WHERE tenant_id = ? AND start_time >= ?", tenant(r), since).Scan(&services)
+	authn.WriteJSON(w, 200, map[string]any{"days": out, "total": map[string]uint64{"spans": tot.Spans, "logs": tot.Logs, "metricPoints": tot.Metrics}, "services": services})
 }

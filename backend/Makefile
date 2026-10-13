@@ -9,10 +9,11 @@ fmt:
 	gofmt -w . && go vet ./...
 up:           ## start the full local stack
 	$(COMPOSE) up -d --build
+	@$(COMPOSE) restart kong >/dev/null  # Kong caches container IPs; re-resolve after recreates
 down:
 	$(COMPOSE) down -v
 logs:
-	$(COMPOSE) logs -f ingestion processor tenancy query incident analysis kong
+	$(COMPOSE) logs -f ingestion processor tenancy query incident analysis assistant kong
 load:         ## 30s load test against local ingestion
 	go run ./cmd/loadgen -url http://localhost:4318 -c 64 -d 30s -spans 100
 kong-check:   ## validate deploy/kong/kong.yml

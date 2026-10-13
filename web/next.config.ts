@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone", // small self-contained server for the Docker image
   // `next build` and `next dev` must not share a build directory: building while
   // the dev server runs corrupts its route table and makes real pages 404.
   distDir: process.env.NODE_ENV === "development" ? ".next-dev" : ".next",

@@ -38,3 +38,8 @@ web/.next/
 
 .env
 web/.next-dev/
+sdk/node/node_modules/
+sdk/node/dist/
+sdk/python/.venv/
+sdk/python/**/*.egg-info/
+**/__pycache__/

@@ -10,10 +10,13 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/resolvex/resolve-x/backend/internal/auth"
+	"github.com/resolvex/resolve-x/backend/internal/authn"
 	"github.com/resolvex/resolve-x/backend/internal/config"
 	"github.com/resolvex/resolve-x/backend/internal/events"
 	"github.com/resolvex/resolve-x/backend/internal/incident"
+	"github.com/resolvex/resolve-x/backend/internal/llm"
 	"github.com/resolvex/resolve-x/backend/internal/platform"
+	"github.com/resolvex/resolve-x/backend/internal/secrets"
 	"github.com/resolvex/resolve-x/backend/internal/store"
 )
 
@@ -36,7 +39,7 @@ func main() {
 	defer db.Close()
 	rdb := redis.NewClient(&redis.Options{Addr: config.String("REDIS_ADDR", "localhost:6379")})
 	defer rdb.Close()
-	ch, err := store.OpenCH(ctx, config.String("CLICKHOUSE_ADDR", "localhost:9000"), config.String("CLICKHOUSE_DB", "default"),
+	ch, err := store.OpenCHReadOnly(ctx, config.String("CLICKHOUSE_ADDR", "localhost:9000"), config.String("CLICKHOUSE_DB", "default"),
 		config.String("CLICKHOUSE_USER", "default"), config.String("CLICKHOUSE_PASSWORD", ""))
 	if err != nil {
 		log.Error("clickhouse", "err", err)
@@ -50,7 +53,15 @@ func main() {
 	}
 	defer pub.Close()
 
-	svc := &incident.Service{DB: db, Log: log}
+	box, err := secrets.New(os.Getenv("SECRETS_KEY"))
+	if err != nil {
+		log.Error("secrets", "err", err)
+		os.Exit(1)
+	}
+	allowPrivate := config.String("AI_ALLOW_PRIVATE_BASE_URLS", "false") == "true"
+	notifier := &incident.Notifier{DB: db, Box: box, Client: llm.SafeClient(allowPrivate, 15*time.Second), AllowPrivate: allowPrivate,
+		PublicURL: config.String("PUBLIC_URL", "http://localhost:3000"), Log: log}
+	svc := &incident.Service{DB: db, Log: log, Notifier: notifier}
 	go svc.RelayOutbox(ctx, pub)
 	go func() {
 		if err := events.Consume(ctx, log, brokers, "incident-service", []string{events.TopicAnalysisCompleted}, svc.HandleAnalysisCompleted); err != nil {
@@ -68,7 +79,7 @@ func main() {
 	health.SetReady(true)
 	platform.ServeOps(ctx, config.String("OPS_ADDR", ":9100"), health, log)
 
-	api := &incident.API{CH: ch, Svc: svc, Keys: auth.NewKeyStore(db, rdb), Secret: []byte(secret)}
+	api := &incident.API{Notifier: notifier, Revoker: &authn.RedisRevoker{R: rdb, TTL: 13 * time.Hour}, CH: ch, Svc: svc, Keys: auth.NewKeyStore(db, rdb), Secret: []byte(secret)}
 	srv := &http.Server{Addr: config.String("HTTP_ADDR", ":8082"), Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second}
 	log.Info("incident-service started", "addr", srv.Addr)
 	if err := platform.Serve(ctx, srv, log); err != nil {

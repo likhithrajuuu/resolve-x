@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api, useApi, type Deployment, type Incident, type IncidentDetail, type Point, type ServiceRow } from "@/lib/api";
 import { fmtMs, fmtNum, fmtPct, timeAgo } from "@/lib/format";
@@ -13,6 +14,8 @@ const tone = { ok: "border-accent-2/30 bg-accent-2/5", warn: "border-warn/40 bg-
 const dot = { ok: "bg-accent-2", warn: "bg-warn", bad: "bg-danger" } as const;
 
 export default function Overview() {
+  const router = useRouter();
+  const [ask, setAsk] = useState("");
   const [win, setWin] = useState("1h");
   const services = useApi<ServiceRow[]>(`/api/v1/services?window=${win}`, 10000);
   const incidents = useApi<Incident[]>("/api/v1/incidents", 8000);
@@ -26,6 +29,12 @@ export default function Overview() {
   return (
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <PageHeader title="Overview"><WindowSelect value={win} onChange={setWin} /></PageHeader>
+
+      <form className="mt-5 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (ask.trim()) router.push(`/dashboard/assistant?q=${encodeURIComponent(ask.trim())}`); }}>
+        <label htmlFor="ask" className="sr-only">Ask Resolve-X</label>
+        <input id="ask" value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="Ask anything: “why is checkout slow?”, “what changed today?”" className="w-full rounded-xl border border-line bg-surface px-4 py-3 text-sm outline-none focus:border-accent" />
+        <button className={btn}>Ask AI</button>
+      </form>
 
       {noData ? (
         <Card className="mt-6 border-accent/40 p-6">

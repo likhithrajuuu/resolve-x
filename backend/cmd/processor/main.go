@@ -23,6 +23,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer ch.Close()
+	if u, p := os.Getenv("CLICKHOUSE_RO_USER"), os.Getenv("CLICKHOUSE_RO_PASSWORD"); u != "" {
+		if err := ch.EnsureReadOnlyUser(ctx, config.String("CLICKHOUSE_DB", "default"), u, p); err != nil {
+			log.Error("read-only clickhouse user", "err", err)
+			os.Exit(1)
+		}
+	}
 
 	health := &platform.Health{}
 	health.SetReady(true)

@@ -6,6 +6,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/resolvex/resolve-x/backend/internal/authn"
 	"github.com/resolvex/resolve-x/backend/internal/config"
 	"github.com/resolvex/resolve-x/backend/internal/platform"
 	"github.com/resolvex/resolve-x/backend/internal/query"
@@ -22,7 +25,7 @@ func main() {
 		log.Error("JWT_SECRET must be set to at least 32 characters")
 		os.Exit(1)
 	}
-	ch, err := store.OpenCH(ctx, config.String("CLICKHOUSE_ADDR", "localhost:9000"), config.String("CLICKHOUSE_DB", "default"),
+	ch, err := store.OpenCHReadOnly(ctx, config.String("CLICKHOUSE_ADDR", "localhost:9000"), config.String("CLICKHOUSE_DB", "default"),
 		config.String("CLICKHOUSE_USER", "default"), config.String("CLICKHOUSE_PASSWORD", ""))
 	if err != nil {
 		log.Error("clickhouse", "err", err)
@@ -30,11 +33,14 @@ func main() {
 	}
 	defer ch.Close()
 
+	rdb := redis.NewClient(&redis.Options{Addr: config.String("REDIS_ADDR", "localhost:6379")})
+	defer rdb.Close()
+
 	health := &platform.Health{}
 	health.SetReady(true)
 	platform.ServeOps(ctx, config.String("OPS_ADDR", ":9100"), health, log)
 
-	srv := &http.Server{Addr: config.String("HTTP_ADDR", ":8081"), Handler: (&query.API{CH: ch, Secret: []byte(secret)}).Handler(),
+	srv := &http.Server{Addr: config.String("HTTP_ADDR", ":8081"), Handler: (&query.API{CH: ch, Secret: []byte(secret), Revoker: &authn.RedisRevoker{R: rdb, TTL: 13 * time.Hour}}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 30 * time.Second}
 	log.Info("query-service started", "addr", srv.Addr)
 	if err := platform.Serve(ctx, srv, log); err != nil {

@@ -3,6 +3,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -44,7 +46,16 @@ var ddl = []string{
 
 type CH struct{ conn driver.Conn }
 
+// OpenCHReadOnly connects without creating tables, for services that only read.
+func OpenCHReadOnly(ctx context.Context, addr, db, user, pass string) (*CH, error) {
+	return open(ctx, addr, db, user, pass, false)
+}
+
 func OpenCH(ctx context.Context, addr, db, user, pass string) (*CH, error) {
+	return open(ctx, addr, db, user, pass, true)
+}
+
+func open(ctx context.Context, addr, db, user, pass string, migrate bool) (*CH, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr:            []string{addr},
 		Auth:            clickhouse.Auth{Database: db, Username: user, Password: pass},
@@ -55,6 +66,9 @@ func OpenCH(ctx context.Context, addr, db, user, pass string) (*CH, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	if !migrate {
+		return &CH{conn: conn}, conn.Ping(ctx)
 	}
 	for _, q := range ddl {
 		if err := conn.Exec(ctx, q); err != nil {
@@ -145,3 +159,19 @@ func (c *CH) InsertMetrics(ctx context.Context, rows []Metric) error {
 
 // Conn exposes the connection for read paths (query API, incident detector).
 func (c *CH) Conn() driver.Conn { return c.conn }
+
+var identRe = regexp.MustCompile(`^[A-Za-z0-9_]{3,64}$`)
+
+// EnsureReadOnlyUser creates the account used by read-only services. It needs
+// the writer to have access-management rights. Credentials come from operator
+// configuration, but are still restricted to a safe alphabet because DDL cannot
+// take bind parameters.
+func (c *CH) EnsureReadOnlyUser(ctx context.Context, db, user, pass string) error {
+	if !identRe.MatchString(user) || !identRe.MatchString(db) || !regexp.MustCompile(`^[A-Za-z0-9_\-.!@#%^*]{8,128}$`).MatchString(pass) {
+		return fmt.Errorf("read-only user credentials contain unsupported characters")
+	}
+	if err := c.conn.Exec(ctx, fmt.Sprintf("CREATE USER IF NOT EXISTS %s IDENTIFIED WITH sha256_password BY '%s'", user, pass)); err != nil {
+		return err
+	}
+	return c.conn.Exec(ctx, fmt.Sprintf("GRANT SELECT ON %s.* TO %s", db, user))
+}

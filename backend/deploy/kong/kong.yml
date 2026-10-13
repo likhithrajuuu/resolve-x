@@ -13,7 +13,7 @@ services:
     retries: 1
     routes:
       - name: tenancy-projects
-        paths: ["/api/v1/projects", "/api/v1/dashboards"]
+        paths: ["/api/v1/projects", "/api/v1/dashboards", "/api/v1/members"]
         strip_path: false
       - name: tenancy-auth
         paths: ["/api/v1/auth"]
@@ -28,15 +28,26 @@ services:
     read_timeout: 30000
     routes:
       - name: query-telemetry
-        paths: ["/api/v1/services", "/api/v1/dependencies", "/api/v1/traces", "/api/v1/logs", "/api/v1/metrics"]
+        paths: ["/api/v1/services", "/api/v1/dependencies", "/api/v1/traces", "/api/v1/logs", "/api/v1/metrics", "/api/v1/usage"]
         strip_path: false
 
   - name: incident
     url: http://incident:8082
     routes:
       - name: incident-api
-        paths: ["/api/v1/incidents", "/api/v1/analyses", "/api/v1/deployments", "/api/v1/webhooks", "/api/v1/alert-rules", "/api/v1/slos"]
+        paths: ["/api/v1/incidents", "/api/v1/analyses", "/api/v1/deployments", "/api/v1/webhooks", "/api/v1/alert-rules", "/api/v1/slos", "/api/v1/notifications"]
         strip_path: false
+
+  - name: assistant
+    url: http://assistant:8083
+    read_timeout: 120000   # an agent run can make several model and tool calls
+    routes:
+      - name: assistant-api
+        paths: ["/api/v1/ai"]
+        strip_path: false
+        plugins:
+          - name: rate-limiting
+            config: { minute: 30, policy: local, fault_tolerant: true }
 
 # OTLP is intentionally NOT routed through Kong: ingestion has very different
 # load characteristics and is exposed directly (api-gateway.md, Does Not Own).

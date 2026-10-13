@@ -22,23 +22,25 @@ import (
 )
 
 type Service struct {
-	DB     *pgxpool.Pool
-	Redis  *redis.Client
-	Secret []byte
-	Log    *slog.Logger
+	DB      *pgxpool.Pool
+	Redis   *redis.Client
+	Secret  []byte
+	Revoker *authn.RedisRevoker
+	Log     *slog.Logger
 }
 
 func (g *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	g.mountAuth(mux)
 	g.mountDashboards(mux)
+	g.mountMembers(mux)
 	mux.HandleFunc("GET /api/v1/projects", g.secure(g.listProjects))
-	mux.HandleFunc("POST /api/v1/projects", g.secure(g.createProject))
+	mux.HandleFunc("POST /api/v1/projects", g.admin(g.createProject))
 	mux.HandleFunc("GET /api/v1/projects/{projectId}/environments", g.secure(g.listEnvironments))
-	mux.HandleFunc("POST /api/v1/projects/{projectId}/environments", g.secure(g.createEnvironment))
-	mux.HandleFunc("GET /api/v1/projects/{projectId}/api-keys", g.secure(g.listAPIKeys))
-	mux.HandleFunc("POST /api/v1/projects/{projectId}/api-keys", g.secure(g.createAPIKey))
-	mux.HandleFunc("DELETE /api/v1/projects/{projectId}/api-keys/{keyId}", g.secure(g.revokeAPIKey))
+	mux.HandleFunc("POST /api/v1/projects/{projectId}/environments", g.admin(g.createEnvironment))
+	mux.HandleFunc("GET /api/v1/projects/{projectId}/api-keys", g.admin(g.listAPIKeys))
+	mux.HandleFunc("POST /api/v1/projects/{projectId}/api-keys", g.admin(g.createAPIKey))
+	mux.HandleFunc("DELETE /api/v1/projects/{projectId}/api-keys/{keyId}", g.admin(g.revokeAPIKey))
 
 	return requestID(mux)
 }
@@ -46,17 +48,28 @@ func (g *Service) Handler() http.Handler {
 func (g *Service) secure(h func(http.ResponseWriter, *http.Request, Identity)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := authn.Verify(g.Secret, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-		if err != nil {
+		if err != nil || (g.Revoker != nil && g.Revoker.Revoked(r.Context(), c)) {
 			writeErr(w, http.StatusUnauthorized, "unauthenticated", "missing or invalid credentials")
 			return
 		}
-		h(w, r, Identity{TenantID: c.Tenant, Actor: c.Email})
+		h(w, r, Identity{TenantID: c.Tenant, Actor: c.Email, UserID: c.Sub, Role: c.Role})
 	}
+}
+
+// admin restricts a route to owners and admins.
+func (g *Service) admin(h func(http.ResponseWriter, *http.Request, Identity)) http.HandlerFunc {
+	return g.secure(func(w http.ResponseWriter, r *http.Request, id Identity) {
+		if id.Role != "owner" && id.Role != "admin" {
+			writeErr(w, http.StatusForbidden, "forbidden", "this action needs an owner or admin")
+			return
+		}
+		h(w, r, id)
+	})
 }
 
 // Identity is the authenticated caller. TenantID always comes from the verified
 // token, never from a request parameter (api-gateway.md, Security).
-type Identity struct{ TenantID, Actor string }
+type Identity struct{ TenantID, Actor, UserID, Role string }
 
 func requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

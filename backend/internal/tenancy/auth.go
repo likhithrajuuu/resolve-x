@@ -20,7 +20,7 @@ func (g *Service) mountAuth(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/signup", g.signup)
 	mux.HandleFunc("POST /api/v1/auth/login", g.login)
 	mux.HandleFunc("GET /api/v1/auth/me", g.secure(func(w http.ResponseWriter, _ *http.Request, id Identity) {
-		writeJSON(w, 200, map[string]string{"email": id.Actor, "tenantId": id.TenantID})
+		writeJSON(w, 200, map[string]string{"email": id.Actor, "tenantId": id.TenantID, "role": id.Role})
 	}))
 }
 

@@ -48,6 +48,7 @@ services:
     image: clickhouse/clickhouse-server:25.3
     ports: ["8123:8123", "9000:9000"]
     environment: { CLICKHOUSE_USER: resolvex, CLICKHOUSE_PASSWORD: resolvex, CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1" }
+    volumes: ["./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro"]
     ulimits: { nofile: { soft: 262144, hard: 262144 } }
     healthcheck: { test: ["CMD-SHELL", "clickhouse-client --user resolvex --password resolvex -q 'SELECT 1'"], interval: 3s, retries: 30 }
 
@@ -57,6 +58,7 @@ services:
     ports: ["4317:4317", "4318:4318", "9101:9100"]
     environment: &env
       JWT_SECRET: dev-only-secret-change-me-0123456789abcdef
+      SECRETS_KEY: dev-only-secrets-key-change-me-0123456789
       KAFKA_BROKERS: kafka:19092
       POSTGRES_URL: postgres://resolvex:resolvex@postgres:5432/resolvex
       REDIS_ADDR: redis:6379
@@ -73,6 +75,8 @@ services:
       CLICKHOUSE_ADDR: clickhouse:9000
       CLICKHOUSE_USER: resolvex
       CLICKHOUSE_PASSWORD: resolvex
+      CLICKHOUSE_RO_USER: resolvex_ro        # the processor creates the read-only account
+      CLICKHOUSE_RO_PASSWORD: resolvex_ro
 
   tenancy:
     <<: *go
@@ -92,8 +96,8 @@ services:
     environment:
       <<: *env
       CLICKHOUSE_ADDR: clickhouse:9000
-      CLICKHOUSE_USER: resolvex
-      CLICKHOUSE_PASSWORD: resolvex
+      CLICKHOUSE_USER: resolvex_ro
+      CLICKHOUSE_PASSWORD: resolvex_ro
 
   incident:
     <<: *go
@@ -107,8 +111,10 @@ services:
     environment:
       <<: *env
       CLICKHOUSE_ADDR: clickhouse:9000
-      CLICKHOUSE_USER: resolvex
-      CLICKHOUSE_PASSWORD: resolvex
+      CLICKHOUSE_USER: resolvex_ro
+      CLICKHOUSE_PASSWORD: resolvex_ro
+      AI_ALLOW_PRIVATE_BASE_URLS: "true"   # local dev: lets webhooks target a local receiver
+      PUBLIC_URL: http://localhost:3000
 
   analysis:
     <<: *go
@@ -120,15 +126,37 @@ services:
     environment:
       <<: *env
       CLICKHOUSE_ADDR: clickhouse:9000
-      CLICKHOUSE_USER: resolvex
-      CLICKHOUSE_PASSWORD: resolvex
-      # Set ANTHROPIC_API_KEY in your shell to enable LLM analysis. Correlated
-      # evidence is then sent to the Anthropic API; unset = heuristic only.
+      CLICKHOUSE_USER: resolvex_ro
+      CLICKHOUSE_PASSWORD: resolvex_ro
+      # Optional server-wide fallback when an organization has not configured its
+      # own provider in Settings. Evidence is then sent to that provider.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_ALLOW_PRIVATE_BASE_URLS: "true"   # local dev: lets you point at Ollama on the host
+
+  assistant:
+    <<: *go
+    build: { context: .., args: { SERVICE: assistant } }
+    expose: ["8083"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      <<: *env
+      QUERY_URL: http://query:8081
+      INCIDENT_URL: http://incident:8082
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_ALLOW_PRIVATE_BASE_URLS: "true"   # local dev only; leave unset in production (SSRF guard)
 
   kong:
     image: kong:3.9             # open-source Kong Gateway, DB-less
-    depends_on: [tenancy, query, incident]
+    depends_on: [tenancy, query, incident, assistant]
     ports:
       - "8000:8000"             # proxy (the public API)
       - "127.0.0.1:8001:8001"   # admin API, localhost only

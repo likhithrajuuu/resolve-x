@@ -41,6 +41,7 @@ export default function IncidentPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Link className={btnGhost} href={`/dashboard/assistant?incident=${inc.id}&q=${encodeURIComponent("Explain this incident: what happened, the likely cause and what I should do next.")}`}>Ask AI</Link>
           <button className={btnGhost} onClick={() => act(`/api/v1/incidents/${inc.id}/analyze`, { method: "POST" })}>Re-analyze</button>
           {inc.status !== "resolved"
             ? <button className={btn} onClick={() => act(`/api/v1/incidents/${inc.id}`, { method: "PATCH", body: JSON.stringify({ status: "resolved" }) })}>Mark resolved</button>

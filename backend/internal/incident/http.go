@@ -13,10 +13,12 @@ import (
 )
 
 type API struct {
-	CH     *store.CH
-	Svc    *Service
-	Keys   *auth.KeyStore
-	Secret []byte
+	CH       *store.CH
+	Notifier *Notifier
+	Svc      *Service
+	Keys     *auth.KeyStore
+	Secret   []byte
+	Revoker  authn.Revoker
 }
 
 func (a *API) Handler() http.Handler {
@@ -26,22 +28,38 @@ func (a *API) Handler() http.Handler {
 	user.HandleFunc("GET /api/v1/incidents/{id}", a.get)
 	user.HandleFunc("PATCH /api/v1/incidents/{id}", a.patch)
 	user.HandleFunc("POST /api/v1/incidents/{id}/analyze", a.analyze)
-	user.HandleFunc("POST /api/v1/analyses/{id}/approve", a.decide("approved"))
-	user.HandleFunc("POST /api/v1/analyses/{id}/reject", a.decide("rejected"))
+	user.HandleFunc("POST /api/v1/analyses/{id}/approve", adminOnly(a.decide("approved")))
+	user.HandleFunc("POST /api/v1/analyses/{id}/reject", adminOnly(a.decide("rejected")))
 	user.HandleFunc("GET /api/v1/deployments", a.deployments)
 	user.HandleFunc("GET /api/v1/alert-rules", a.listRules)
-	user.HandleFunc("POST /api/v1/alert-rules", a.createRule)
-	user.HandleFunc("PATCH /api/v1/alert-rules/{id}", a.patchRule)
-	user.HandleFunc("DELETE /api/v1/alert-rules/{id}", a.deleteRule)
+	user.HandleFunc("POST /api/v1/alert-rules", adminOnly(a.createRule))
+	user.HandleFunc("PATCH /api/v1/alert-rules/{id}", adminOnly(a.patchRule))
+	user.HandleFunc("DELETE /api/v1/alert-rules/{id}", adminOnly(a.deleteRule))
+	user.HandleFunc("GET /api/v1/notifications/channels", adminOnly(a.listChannels))
+	user.HandleFunc("POST /api/v1/notifications/channels", adminOnly(a.createChannel))
+	user.HandleFunc("DELETE /api/v1/notifications/channels/{id}", adminOnly(a.deleteChannel))
+	user.HandleFunc("POST /api/v1/notifications/channels/{id}/test", adminOnly(a.testChannel))
+	user.HandleFunc("GET /api/v1/notifications/log", adminOnly(a.notificationLog))
 	user.HandleFunc("GET /api/v1/slos", a.listSLOs)
-	user.HandleFunc("POST /api/v1/slos", a.createSLO)
-	user.HandleFunc("DELETE /api/v1/slos/{id}", a.deleteSLO)
+	user.HandleFunc("POST /api/v1/slos", adminOnly(a.createSLO))
+	user.HandleFunc("DELETE /api/v1/slos/{id}", adminOnly(a.deleteSLO))
 
 	root := http.NewServeMux()
 	root.HandleFunc("POST /api/v1/webhooks/alerts", a.alertWebhook)
 	root.HandleFunc("POST /api/v1/webhooks/deployments", a.deploymentWebhook)
-	root.Handle("/", authn.Require(a.Secret, user))
+	root.Handle("/", authn.RequireWith(a.Secret, a.Revoker, user))
 	return root
+}
+
+// adminOnly restricts a route to owners and admins (members can view and investigate).
+func adminOnly(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if c := claims(r); c.Role != "owner" && c.Role != "admin" {
+			authn.WriteError(w, http.StatusForbidden, "forbidden", "this action needs an owner or admin")
+			return
+		}
+		h(w, r)
+	}
 }
 
 func claims(r *http.Request) *authn.Claims { return authn.FromContext(r.Context()) }
@@ -371,4 +389,56 @@ func (a *API) deleteSLO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) listChannels(w http.ResponseWriter, r *http.Request) {
+	out, err := a.Notifier.List(r.Context(), claims(r).Tenant)
+	if err != nil {
+		serverErr(w, err)
+		return
+	}
+	authn.WriteJSON(w, 200, out)
+}
+
+func (a *API) createChannel(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Kind, Name, URL string }
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	c, secret, err := a.Notifier.Create(r.Context(), claims(r).Tenant, in.Kind, in.Name, strings.TrimSpace(in.URL))
+	if err != nil {
+		authn.WriteError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	authn.WriteJSON(w, 201, map[string]any{"channel": c, "signingSecret": secret})
+}
+
+func (a *API) deleteChannel(w http.ResponseWriter, r *http.Request) {
+	if err := a.Notifier.Delete(r.Context(), claims(r).Tenant, r.PathValue("id")); err != nil {
+		serverErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) testChannel(w http.ResponseWriter, r *http.Request) {
+	err := a.Notifier.Test(r.Context(), claims(r).Tenant, r.PathValue("id"))
+	if errors.Is(err, ErrNotFound) {
+		serverErr(w, err)
+		return
+	}
+	if err != nil {
+		authn.WriteJSON(w, 200, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	authn.WriteJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *API) notificationLog(w http.ResponseWriter, r *http.Request) {
+	out, err := a.Notifier.Log50(r.Context(), claims(r).Tenant)
+	if err != nil {
+		serverErr(w, err)
+		return
+	}
+	authn.WriteJSON(w, 200, out)
 }

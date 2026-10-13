@@ -3,6 +3,8 @@
 import { useState, type FormEvent } from "react";
 import { api, useApi } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
+import { AiSettingsCard } from "@/components/AiSettings";
+import { NotificationsCard } from "@/components/Notifications";
 import { SdkSnippets } from "@/components/SdkSnippets";
 import { btn, btnGhost, Card, ErrorNote, input, Loading, PageHeader } from "@/components/ui";
 
@@ -65,6 +67,12 @@ export default function SettingsPage() {
         </form>
         {newKey && <p className="mt-4 rounded-md border border-accent-2/40 bg-accent-2/10 p-3 text-sm font-medium text-accent-2">Your key is filled into the snippets below. Copy it now; it will not be shown again.</p>}
       </Card>
+
+      <h2 className="mt-8 text-sm font-medium text-muted">AI assistant</h2>
+      <Card className="mt-3 p-5"><AiSettingsCard /></Card>
+
+      <h2 className="mt-8 text-sm font-medium text-muted">Notifications</h2>
+      <Card className="mt-3 p-5"><NotificationsCard /></Card>
 
       <h2 className="mt-8 text-sm font-medium text-muted">Install an SDK</h2>
       <Card className="mt-3 p-5"><SdkSnippets apiKey={newKey ?? "rx_your_api_key"} ingest={ingest} api={process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"} /></Card>

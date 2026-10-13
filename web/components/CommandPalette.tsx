@@ -8,8 +8,8 @@ type Item = { id: string; label: string; hint: string; href: string };
 
 const PAGES: Item[] = [
   ["/dashboard", "Overview"], ["/dashboard/incidents", "Incidents"], ["/dashboard/services", "Services"], ["/dashboard/dependencies", "Dependency map"],
-  ["/dashboard/traces", "Traces"], ["/dashboard/logs", "Logs"], ["/dashboard/metrics", "Metrics explorer"], ["/dashboard/dashboards", "Dashboards"],
-  ["/dashboard/alerts", "Alert rules"], ["/dashboard/slos", "SLOs"], ["/dashboard/settings", "Settings and API keys"],
+  ["/dashboard/assistant", "Ask AI"], ["/dashboard/traces", "Traces"], ["/dashboard/logs", "Logs"], ["/dashboard/metrics", "Metrics explorer"], ["/dashboard/dashboards", "Dashboards"],
+  ["/dashboard/alerts", "Alert rules"], ["/dashboard/slos", "SLOs"], ["/dashboard/team", "Team and invites"], ["/dashboard/usage", "Usage"], ["/dashboard/settings", "Settings and API keys"],
 ].map(([href, label]) => ({ id: href, label, hint: "Go to", href }));
 
 /** Turns plain phrases like "errors in payments" into a filtered view. */
@@ -56,8 +56,9 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
     ];
     const needle = q.trim().toLowerCase();
     if (!needle) return all.slice(0, 12);
+    const askAi: Item = { id: "q-ask", label: `Ask AI: “${q.trim()}”`, hint: "Assistant", href: `/dashboard/assistant?q=${encodeURIComponent(q.trim())}` };
     const smart = all.filter((i) => i.id.startsWith("q-"));
-    return [...smart, ...all.filter((i) => !i.id.startsWith("q-") && (i.label + " " + i.hint).toLowerCase().includes(needle))].slice(0, 12);
+    return [...smart, ...all.filter((i) => !i.id.startsWith("q-") && (i.label + " " + i.hint).toLowerCase().includes(needle)).slice(0, 10), askAi];
   }, [q, services.data, incidents.data]);
 
   if (!open) return null;

@@ -3,16 +3,18 @@
 package main
 
 import (
-	"net/http"
 	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/resolvex/resolve-x/backend/internal/aiconfig"
 	"github.com/resolvex/resolve-x/backend/internal/analysis"
 	"github.com/resolvex/resolve-x/backend/internal/config"
 	"github.com/resolvex/resolve-x/backend/internal/events"
+	"github.com/resolvex/resolve-x/backend/internal/llm"
 	"github.com/resolvex/resolve-x/backend/internal/platform"
+	"github.com/resolvex/resolve-x/backend/internal/secrets"
 	"github.com/resolvex/resolve-x/backend/internal/store"
 )
 
@@ -28,7 +30,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
-	ch, err := store.OpenCH(ctx, config.String("CLICKHOUSE_ADDR", "localhost:9000"), config.String("CLICKHOUSE_DB", "default"),
+	ch, err := store.OpenCHReadOnly(ctx, config.String("CLICKHOUSE_ADDR", "localhost:9000"), config.String("CLICKHOUSE_DB", "default"),
 		config.String("CLICKHOUSE_USER", "default"), config.String("CLICKHOUSE_PASSWORD", ""))
 	if err != nil {
 		log.Error("clickhouse", "err", err)
@@ -43,11 +45,17 @@ func main() {
 	defer pub.Close()
 
 	w := &analysis.Worker{G: &analysis.Gatherer{CH: ch, DB: db}, Pub: pub, Log: log}
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		w.LLM = &analysis.LLM{APIKey: key, Model: config.String("ANTHROPIC_MODEL", "claude-sonnet-5-5"), Client: &http.Client{Timeout: 60 * time.Second}}
-		log.Warn("LLM analysis enabled: correlated evidence is sent to the Anthropic API", "model", w.LLM.Model)
+	if key := os.Getenv("SECRETS_KEY"); key != "" {
+		box, err := secrets.New(key)
+		if err != nil {
+			log.Error("secrets", "err", err)
+			os.Exit(1)
+		}
+		w.AI = &aiconfig.Store{DB: db, Box: box}
+		w.Client = llm.SafeClient(config.String("AI_ALLOW_PRIVATE_BASE_URLS", "false") == "true", 90*time.Second)
+		log.Info("LLM refinement available: organizations that configure an AI provider send correlated evidence (including log text) to it")
 	} else {
-		log.Info("LLM analysis disabled (no ANTHROPIC_API_KEY); using the heuristic analyzer")
+		log.Info("SECRETS_KEY not set; using the heuristic analyzer only")
 	}
 
 	health := &platform.Health{}

@@ -21,6 +21,7 @@ type Claims struct {
 	Tenant string `json:"tid"`
 	Role   string `json:"role"`
 	Exp    int64  `json:"exp"`
+	Iat    int64  `json:"iat"`
 }
 
 var ErrInvalidToken = errors.New("invalid or expired token")
@@ -36,7 +37,8 @@ func sign(secret []byte, signingInput string) string {
 }
 
 func Issue(secret []byte, c Claims, ttl time.Duration) (string, error) {
-	c.Exp = time.Now().Add(ttl).Unix()
+	now := time.Now()
+	c.Exp, c.Iat = now.Add(ttl).Unix(), now.Unix()
 	body, err := json.Marshal(c)
 	if err != nil {
 		return "", err
@@ -77,12 +79,20 @@ func FromContext(ctx context.Context) *Claims {
 	return c
 }
 
+// Revoker reports whether a token was invalidated after it was issued (member
+// removed, role changed, password reset). Nil means "never revoked".
+type Revoker interface {
+	Revoked(ctx context.Context, c *Claims) bool
+}
+
 // Require wraps a handler so it only runs for a valid bearer token.
-func Require(secret []byte, next http.Handler) http.Handler {
+func Require(secret []byte, next http.Handler) http.Handler { return RequireWith(secret, nil, next) }
+
+func RequireWith(secret []byte, rv Revoker, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		c, err := Verify(secret, tok)
-		if err != nil {
+		if err != nil || (rv != nil && rv.Revoked(r.Context(), c)) {
 			WriteError(w, http.StatusUnauthorized, "unauthenticated", "missing or invalid credentials")
 			return
 		}

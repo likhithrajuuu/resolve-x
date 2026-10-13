@@ -5,13 +5,14 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, session } from "@/lib/api";
 import { Logo } from "./Logo";
+import { ThemeToggle } from "./ThemeToggle";
 import { CommandPalette } from "./CommandPalette";
 
 const nav: { label: string; items: [string, string][] }[] = [
   { label: "Monitor", items: [["/dashboard", "Overview"], ["/dashboard/incidents", "Incidents"], ["/dashboard/services", "Services"], ["/dashboard/dependencies", "Dependencies"]] },
-  { label: "Explore", items: [["/dashboard/traces", "Traces"], ["/dashboard/logs", "Logs"], ["/dashboard/metrics", "Metrics"]] },
+  { label: "Explore", items: [["/dashboard/assistant", "Ask AI"], ["/dashboard/traces", "Traces"], ["/dashboard/logs", "Logs"], ["/dashboard/metrics", "Metrics"]] },
   { label: "Build", items: [["/dashboard/dashboards", "Dashboards"], ["/dashboard/alerts", "Alert rules"], ["/dashboard/slos", "SLOs"]] },
-  { label: "Account", items: [["/dashboard/settings", "Settings"]] },
+  { label: "Account", items: [["/dashboard/team", "Team"], ["/dashboard/usage", "Usage"], ["/dashboard/settings", "Settings"]] },
 ];
 
 export function Shell({ children }: { children: ReactNode }) {
@@ -56,7 +57,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </nav>
         <div className="mt-8 hidden text-xs text-muted md:block">
           <p className="truncate">{email ?? "…"}</p>
-          <button className="mt-1 hover:text-fg" onClick={() => { session.clear(); router.replace("/login"); }}>Sign out</button>
+          <div className="mt-1 flex items-center gap-3"><button className="hover:text-fg" onClick={() => { session.clear(); router.replace("/login"); }}>Sign out</button><ThemeToggle /></div>
         </div>
       </aside>
       <div className="min-w-0 flex-1">{children}</div>

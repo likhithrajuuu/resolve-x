@@ -29,6 +29,21 @@
 }
 
 html { color-scheme: dark; scroll-behavior: smooth; }
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f7f8fb;
+  --surface: #ffffff;
+  --surface-2: #eef1f7;
+  --line: #dde2ec;
+  --fg: #151a26;
+  --muted: #5b6579;
+  --accent: #3b6df0;
+  --accent-2: #0f9d78;
+  --danger: #d6293e;
+  --warn: #b7791f;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } html { scroll-behavior: auto; } }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); }
 
 .glow {

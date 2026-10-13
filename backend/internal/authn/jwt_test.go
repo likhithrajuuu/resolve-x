@@ -1,6 +1,7 @@
 package authn
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,5 +53,21 @@ func TestRequireInjectsClaims(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("no token: got %d", rec.Code)
+	}
+}
+
+type fakeRevoker struct{ cut int64 }
+
+func (f fakeRevoker) Revoked(_ context.Context, c *Claims) bool { return c.Iat < f.cut }
+
+func TestRevokedTokensAreRejected(t *testing.T) {
+	old, _ := Issue(secret, Claims{Sub: "u", Tenant: "t"}, time.Hour)
+	h := RequireWith(secret, fakeRevoker{cut: time.Now().Add(time.Minute).Unix()}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+old)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked token accepted: %d", rec.Code)
 	}
 }

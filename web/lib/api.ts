@@ -117,3 +117,23 @@ export type SLO = {
 export type Deployment = { id: string; service: string; version: string; environment: string; at: string };
 export type Widget = { id: string; type: "metric" | "service" | "logs" | "incidents" | "slo"; title: string; span: 1 | 2; config: Record<string, string> };
 export type DashboardDef = { id: string; name: string; widgets: Widget[]; updatedAt: string };
+
+export type ProviderInfo = { id: string; label: string; defaultModel: string; models: string[]; needsBaseUrl: boolean; keyOptional: boolean; help: string };
+export type AiSettings = {
+  configured: boolean; provider: string; model: string; baseUrl: string; keyHint: string; source: "tenant" | "env" | "none";
+  providers: ProviderInfo[]; canEdit: boolean;
+};
+export type ChatStep = { tool: string; args: string; ok: boolean; preview: string; durationMs: number };
+export type ChatMessage = { role: "user" | "assistant"; content: string; steps?: ChatStep[]; error?: boolean };
+
+export type Me = { email: string; tenantId: string; role: "owner" | "admin" | "member" };
+export type Member = { userId: string; email: string; role: Me["role"]; self: boolean };
+export type Pending = { id: string; kind: "invite" | "reset"; email: string; role: string; expiresAt: string };
+export type Team = { members: Member[]; pending: Pending[]; canManage: boolean };
+export type Channel = { id: string; kind: "slack" | "webhook"; name: string; urlHint: string; enabled: boolean; createdAt: string };
+export type NotificationLog = { channelId: string; event: string; incidentId: string; ok: boolean; error: string; at: string };
+export type UsageDay = { day: string; spans: number; logs: number; metricPoints: number };
+export type Usage = { days: UsageDay[]; total: { spans: number; logs: number; metricPoints: number }; services: number };
+
+export const isAdmin = (m?: Me | null) => m?.role === "owner" || m?.role === "admin";
+export const useMe = () => useApi<Me>("/api/v1/auth/me");

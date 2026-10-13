@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { api, useApi, type ServiceRow, type SLO } from "@/lib/api";
+import { api, isAdmin, useMe, useApi, type ServiceRow, type SLO } from "@/lib/api";
 import { Budget, sloTone } from "@/components/widgets";
 import { btn, btnGhost, Card, Empty, ErrorNote, input, Loading, PageHeader } from "@/components/ui";
 
 export default function SlosPage() {
   const { data, error, loading, reload } = useApi<SLO[]>("/api/v1/slos", 30000);
   const services = useApi<ServiceRow[]>("/api/v1/services?window=24h");
+  const me = useMe();
+  const admin = isAdmin(me.data);
   const [creating, setCreating] = useState(false);
   const [kind, setKind] = useState<SLO["kind"]>("availability");
   const [err, setErr] = useState<string | null>(null);
@@ -23,7 +25,7 @@ export default function SlosPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-      <PageHeader title="Service level objectives"><button className={btn} onClick={() => setCreating((v) => !v)}>{creating ? "Cancel" : "New SLO"}</button></PageHeader>
+      <PageHeader title="Service level objectives">{admin && <button className={btn} onClick={() => setCreating((v) => !v)}>{creating ? "Cancel" : "New SLO"}</button>}</PageHeader>
       <p className="mt-2 text-sm text-muted">The error budget is how much failure your objective allows. Burn rate 1× spends it exactly over the window; above 1× you will run out early.</p>
       {creating && (
         <Card className="mt-6 p-4">
